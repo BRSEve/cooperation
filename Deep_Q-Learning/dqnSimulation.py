@@ -1,3 +1,4 @@
+from math import e
 import sys
 from datetime import datetime
 import torch.nn.functional as F
@@ -9,6 +10,7 @@ import json
 import numpy
 import os
 import draw_plots
+import pickle
 
 '''Open file Setting.json which contains learning parameters. '''
 with open('Setting.json') as f:
@@ -43,6 +45,9 @@ for i in network_load:
         sys.exit()
 
 env = dynetworkEnv()
+
+print(f"env.dynetwork: {env.dynetwork}")
+
 env.reset(max(network_load))
 print("max(network_load)",max(network_load))
 agent = QAgent(env.dynetwork)
@@ -150,12 +155,16 @@ if test_opt == 1:
     results_dir = os.path.join(script_dir, 'q-learning/')
     if network_opt == 1:
         print("当前使用的network是graph1--测试SP时修改节点数目时使用")
-        network = nx.read_gpickle(results_dir + "graph1.gpickle")
+        # network = nx.read_gpickle(results_dir + "graph1.gpickle")
+        with open(results_dir + "graph1.gpickle", "rb") as f:
+            network = pickle.load(f)
         env.initial_dynetwork = dynetwork.DynamicNetwork(copy.deepcopy(network), env.max_initializations)
         env.dynetwork = copy.deepcopy(env.initial_dynetwork)
     else:
         print("当前测试使用的network是graph3")
-        network = nx.read_gpickle(results_dir + "graph3.gpickle")
+        #network = nx.read_gpickle(results_dir + "graph3.gpickle")
+        with open(results_dir + "graph3.gpickle", "rb") as f:
+            network = pickle.load(f)
         env.initial_dynetwork = dynetwork.DynamicNetwork(copy.deepcopy(network), env.max_initializations)
         env.dynetwork = copy.deepcopy(env.initial_dynetwork)
 

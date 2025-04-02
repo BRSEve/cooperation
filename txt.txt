@@ -18,7 +18,6 @@ import UpdateEdges as UE
 from neural_network import NeuralNetwork
 import matplotlib
 import get_graph
-import pickle
 
 '''Open file Setting.json which contains learning and network parameters. '''
 main_dir = os.path.dirname(os.path.realpath(__file__))
@@ -151,20 +150,14 @@ class dynetworkEnv(gym.Env):
                 # print("network's delay:",network[s_edge][e_edge]['edge_delay'] )
             if not os.path.isdir(results_dir):
                 os.makedirs(results_dir)
-            # nx.write_gpickle(network, results_dir + "graph3.gpickle")
-            with open(results_dir + "graph3.gpickle", "wb") as f:
-                pickle.dump(network, f)
-            
+            nx.write_gpickle(network, results_dir + "graph3.gpickle")
             # network = nx.read_gpickle(results_dir + "graph.gpickle")
             self.initial_dynetwork = dynetwork.DynamicNetwork(
                 copy.deepcopy(network), self.max_initializations)
             self.dynetwork = copy.deepcopy(self.initial_dynetwork)
         else:
             print("读取已有的地图")
-            # network = nx.read_gpickle(results_dir + "graph3.gpickle")
-            with open(results_dir + "graph3.gpickle", "rb") as f:
-                network = pickle.load(f)
-            
+            network = nx.read_gpickle(results_dir + "graph3.gpickle")
             self.initial_dynetwork = dynetwork.DynamicNetwork(copy.deepcopy(network), self.max_initializations)
             self.dynetwork = copy.deepcopy(self.initial_dynetwork)
             positions = {}
