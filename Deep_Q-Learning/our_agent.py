@@ -230,10 +230,9 @@ class QAgent(object):
         for idx in range(values.size()[1]):   # 遍历次数为列数
             if non_terminal_idx_tensor[idx]:
                 # print("non_terminal_idx_tensor[idx]:", non_terminal_idx_tensor[idx])
-                adjs = self.adjacency[actions[idx]][0]
-                adjs = (adjs == 1)
+                adjs = (self.adjacency[actions[idx]] == 1)
                 temp2 = temp1[idx, :].view(1, -1)  # [idx, :]表示取矩阵的第几行
-                values[0, idx] = torch.max(temp2[adjs]).detach()
+                values[0, idx] = torch.max(temp2[0, adjs]).detach()
 
         return values
 

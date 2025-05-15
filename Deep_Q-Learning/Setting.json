@@ -35,7 +35,7 @@
 		"use_priority_memory": 0
 	},
 	"Simulation": {
-		"training_episodes":0,
+		"training_episodes":1,
 		"max_allowed_time_step_per_episode": 400,
 		"num_time_step_to_update_target_network":10,
 		"test_network_load_min": 250,
@@ -56,5 +56,9 @@
 		"SP_test_opt_change": 1,
 		"DQN_test_opt_change": 1,
 		"network_opt_test": 0
+	},
+	"Security": {
+		"insecure_nodes": [3, 5, 12],
+		"penalty_per_hop": 0.0001
 	}
 }
