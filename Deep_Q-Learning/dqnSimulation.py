@@ -65,6 +65,10 @@ deliv_ratio_learning =[]
 congestions_number_learning = []
 retransmission_ratio_learning = []
 
+# 新增：记录每轮的安全系数和模型路径
+sec_coeffs = []
+model_paths = []
+
 past_reward = env.helper_calc_reward()
 dqn0to1_reward_diff = []
 
@@ -123,6 +127,16 @@ for i_episode in range(numEpisode):
     print("total packets:",env.npackets + env.dynetwork._initializations)
     print("delivery_ratio:", env.dynetwork._deliveries / (env.dynetwork._deliveries + env.dynetwork._congestions[-1]))
     print("avg_delivery_time:", env.calc_avg_delivery())
+    
+    sec_coeff = max(0.0, 1.0 - env.insecure_hops * env.penalty_hop)
+    print(f"安全系数 = {sec_coeff:.4f}   （不安全跳数={env.insecure_hops}，总跳数={env.total_hops}）")
+    # 训练循环里，计算完 sec_coeff
+    sec_coeffs.append(sec_coeff)
+    # 用 torch.save 直接把 policy_net / optimizer 存一个新文件
+    save_path = f"./models/model_ep{i_episode+1}_sec{sec_coeff:.3f}.pth"
+    torch.save(agent, save_path)
+    model_paths.append(save_path)
+    
     # f.writelines(["delivery_ratio: " + str(env.dynetwork._deliveries / (env.dynetwork._deliveries + env.dynetwork._congestions[-1])) + "\n"])
     # f.writelines(["avg_delivery_time: " + str(env.calc_avg_delivery()) + "\n"])
     avg_deliv_learning.append(env.calc_avg_delivery())  # 计算的是所有packets的平均交付时间
@@ -426,7 +440,7 @@ if test_opt == 1:
                 env.reset(curLoad, True, False)
                 for num in range(Episode):
                     for t in range(time_steps):
-                        if (t + 1) % 200 == 0:
+                        if (t + 1) % 100 == 0:
                             print("Time step", t + 1)
                         env.updateWhole(agent, t, learn=True, SP=False)
                         if agent.config['update_less']:
@@ -543,6 +557,11 @@ print("start Time =", start_time)
 now = datetime.now()
 current_time = now.strftime("%H:%M:%S")
 print("Whole End Time =", current_time)
+
+ranked = sorted(zip(sec_coeffs, model_paths), reverse=True)
+top_k = ranked[:5]    # 取前 5 个最安全的
+for coeff, path in top_k:
+    print(f"模型 {path} 安全系数 {coeff:.3f}")
 
 # main_dir = os.path.dirname(os.path.realpath(__file__))
 # np.save(os.path.join(main_dir, "dqn_avg_deliv"), avg_deliv)

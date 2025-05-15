@@ -85,6 +85,12 @@ class dynetworkEnv(gym.Env):
         self.batch_size = setting['DQN']['memory_batch_size']
         self.gamma = setting['AGENT']['gamma_for_next_q_val']
         self.network_use = setting['NETWORK']['use_which_network']
+        
+        self.insecure_nodes = set(setting["Security"]["insecure_nodes"])
+        self.penalty_hop    = setting["Security"]["penalty_per_hop"]
+        
+        self.insecure_hops = 0
+        self.total_hops    = 0
         # if self.network_type == 'barabasi-albert':
         #     network = nx.barabasi_albert_graph(self.nnodes, self.nedges)
         # else:
@@ -275,6 +281,11 @@ class dynetworkEnv(gym.Env):
                     if pkt_state[0] == pkt_state[1]:
                        print("currPos == desPos")
                     action = agent.act(self.dqn[pkt_state[0]], cur_state, nlist)
+                    
+                # —— 新增：统计安全跳数 —— 
+                self.total_hops += 1
+                if action in self.insecure_nodes:
+                    self.insecure_hops += 1
 
                 reward,  self.remaining, self.curr_queue, action = self.step(action, pkt_state[0])
                 if reward != None:

@@ -210,5 +210,5 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,linux
 
 Deep_Q-Learning/__pycache__/
-Deep_Q-Learning/experiences/
+Deep_Q-Learning/experiences
 Deep_Q-Learning/DQN_Times

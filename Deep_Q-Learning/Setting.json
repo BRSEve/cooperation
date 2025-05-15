@@ -35,8 +35,8 @@
 		"use_priority_memory": 0
 	},
 	"Simulation": {
-		"training_episodes":1,
-		"max_allowed_time_step_per_episode": 400,
+		"training_episodes":3,
+		"max_allowed_time_step_per_episode": 200,
 		"num_time_step_to_update_target_network":10,
 		"test_network_load_min": 250,
 		"test_network_load_max":1500 ,
