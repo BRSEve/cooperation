@@ -66,15 +66,18 @@ congestions_number_learning = []
 retransmission_ratio_learning = []
 
 # 新增：记录每轮的安全系数和模型路径
-sec_coeffs = []
-model_paths = []
+# sec_coeffs = []
+# model_paths = []
+best_sec = -1.0
+best_model_path = None
 
 past_reward = env.helper_calc_reward()
 dqn0to1_reward_diff = []
 
 
 f = open("experiences", "a")
-model_path = setting["DQN"]["model_path"]
+# model_path = setting["DQN"]["model_path"]
+model_path = "./models/best_model.pth"
 train_times = setting["DQN"]["train_times"]
 if train_times != 0:
     print("使用之前训练过的模型")
@@ -85,6 +88,10 @@ if train_times != 0:
     env.load(model_path)
 ''' we simulate one instance of finite packet routing numEpisode times '''
 for i_episode in range(numEpisode):
+    
+    # 每集开始前重置计数器
+    env.insecure_hops = 0
+    env.total_hops    = 0
     print("---------- Episode:", i_episode+1, " ----------")
     step = []
     deliveries = []
@@ -131,11 +138,13 @@ for i_episode in range(numEpisode):
     sec_coeff = max(0.0, 1.0 - env.insecure_hops * env.penalty_hop)
     print(f"安全系数 = {sec_coeff:.4f}   （不安全跳数={env.insecure_hops}，总跳数={env.total_hops}）")
     # 训练循环里，计算完 sec_coeff
-    sec_coeffs.append(sec_coeff)
-    # 用 torch.save 直接把 policy_net / optimizer 存一个新文件
     save_path = f"./models/model_ep{i_episode+1}_sec{sec_coeff:.3f}.pth"
-    torch.save(agent, save_path)
-    model_paths.append(save_path)
+    env.save(agent, save_path)
+    if sec_coeff > best_sec:
+        best_sec = sec_coeff
+        best_model_path = save_path
+        # 你也可以同时写一个固定名字，方便测试
+        env.save(agent, "./models/best_model.pth")
     
     # f.writelines(["delivery_ratio: " + str(env.dynetwork._deliveries / (env.dynetwork._deliveries + env.dynetwork._congestions[-1])) + "\n"])
     # f.writelines(["avg_delivery_time: " + str(env.calc_avg_delivery()) + "\n"])
@@ -176,7 +185,7 @@ if test_opt == 1:
         env.dynetwork = copy.deepcopy(env.initial_dynetwork)
     else:
         print("当前测试使用的network是graph3")
-        #network = nx.read_gpickle(results_dir + "graph3.gpickle")
+        # network = nx.read_gpickle(results_dir + "graph3.gpickle")
         with open(results_dir + "graph3.gpickle", "rb") as f:
             network = pickle.load(f)
         env.initial_dynetwork = dynetwork.DynamicNetwork(copy.deepcopy(network), env.max_initializations)
@@ -188,7 +197,6 @@ if test_opt == 1:
     print("Current_Train_Time =", start_time)
     agent.config['epsilon'] = 0.01
     agent.config['decay_rate'] = 1
-
 
     def Test(currTrial, curLoad, SP=False):
         step = []
@@ -226,7 +234,6 @@ if test_opt == 1:
         congestions_number= env.dynetwork._congestions[-1]
         retransmission_ratio= env.dynetwork._retransmission[-1]/(env.dynetwork._deliveries + env.dynetwork._retransmission[-1])
         return avg_deliv, avg_deliv_ratio, congestions_number, retransmission_ratio
-
 
     trials = setting["Simulation"]["test_trials_per_load"]
     SP_test_opt = setting["Simulation"]["SP_test_opt"]
@@ -318,7 +325,6 @@ if test_opt == 1:
         all_sp_congestions_numbers[i].append(sp_congest_number)
     # 画图
     draw_plots.draw_testing(all_dqn_avg_delivs, all_sp_avg_delivs,all_dqn_avg_deliv_ratios,all_sp_avg_deliv_ratios,all_dqn_retransmission_ratios,all_sp_retransmission_ratios,all_dqn_congestions_numbers, all_sp_congestions_numbers)
-
 
     whether_retrain_opt = setting["Simulation"]["whether_retrain"]
     # 平均交付时间
@@ -558,10 +564,8 @@ now = datetime.now()
 current_time = now.strftime("%H:%M:%S")
 print("Whole End Time =", current_time)
 
-ranked = sorted(zip(sec_coeffs, model_paths), reverse=True)
-top_k = ranked[:5]    # 取前 5 个最安全的
-for coeff, path in top_k:
-    print(f"模型 {path} 安全系数 {coeff:.3f}")
+# 训练结束后，直接输出训练过程中找到的最安全模型
+print(f"训练结束！最安全模型是：{best_model_path}（安全系数={best_sec:.3f}）")
 
 # main_dir = os.path.dirname(os.path.realpath(__file__))
 # np.save(os.path.join(main_dir, "dqn_avg_deliv"), avg_deliv)

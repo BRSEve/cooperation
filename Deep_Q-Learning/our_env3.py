@@ -91,6 +91,7 @@ class dynetworkEnv(gym.Env):
         
         self.insecure_hops = 0
         self.total_hops    = 0
+        self.penalty_reward = setting["Security"]["penalty_reward"]
         # if self.network_type == 'barabasi-albert':
         #     network = nx.barabasi_albert_graph(self.nnodes, self.nedges)
         # else:
@@ -270,6 +271,12 @@ class dynetworkEnv(gym.Env):
                 # torch的squeeze()函数的作用是压缩一个tensor的维数为1的维度，使该tensor降维变成最紧凑的形式
                 # unsqueeze()函数的功能是在tensor的某个维度上添加一个维数为1的维度 具体例子见csdn收藏夹
                 # torch.cat()是为了把多个tensor进行拼接而存在的
+                
+                # 新增：添加当前节点的安全状态到当前状态
+                # num_insec = sum(1 for nbr in nlist if nbr in self.insecure_nodes)
+                # ratio_insec = num_insec / len(nlist)  # 或直接用 num_insec
+                # feat = torch.tensor([[ratio_insec]])
+                # cur_state = torch.cat((cur_state, feat), dim=1)
 
                 if SP:
                     if pkt_state[0] == pkt_state[1]:
@@ -284,12 +291,17 @@ class dynetworkEnv(gym.Env):
                     
                 # —— 新增：统计安全跳数 —— 
                 self.total_hops += 1
-                if action in self.insecure_nodes:
+                is_insecure = (action in self.insecure_nodes)
+                if is_insecure:
                     self.insecure_hops += 1
 
-                reward,  self.remaining, self.curr_queue, action = self.step(action, pkt_state[0])
+                reward, self.remaining, self.curr_queue, action = self.step(action, pkt_state[0])
                 if reward != None:
                     sendctr += 1
+                    
+                    if is_insecure:
+                        reward = reward - self.penalty_reward
+                    
                 if will_learn:
                     # 在training时，更新
                     if action != None:
@@ -305,6 +317,12 @@ class dynetworkEnv(gym.Env):
                             next_buffer_size = holding_capacity - sending_capacity - receiving_queue_size
                             next_buffer_size_tensor = torch.tensor([next_buffer_size]).unsqueeze(0)
                             next_state = torch.cat((next_state, next_buffer_size_tensor), dim=1).float()
+                            
+                        # 新增：添加下一个节点的安全状态到下一个状态
+                        # num_insec = sum(1 for nbr in nlist if nbr in self.insecure_nodes)
+                        # ratio_insec = num_insec / len(nlist)  # 或直接用 num_insec
+                        # feat = torch.tensor([[ratio_insec]])
+                        # next_state = torch.cat((next_state, feat), dim=1)
 
                         agent.learn(self.dqn[pkt_state[0]], self.dqn, cur_state, action, reward, next_state)
 
@@ -564,56 +582,87 @@ class dynetworkEnv(gym.Env):
         for nn in self.dqn:
             nn.replay_memory.clean()
 
+    # def save(self, opt, model_path):
+    #     if opt == 1:
+    #         if model_path == "./net_params.pth":
+    #             path = './net_params.pth'
+    #             states = {}
+    #             for nn in self.dqn:
+    #                 index_model = 'model' + str(nn.ID) + '_dict'
+    #                 index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
+    #                 states[index_model] = self.dqn[nn.ID].policy_net.state_dict()
+    #                 states[index_optimizer] = self.dqn[nn.ID].optimizer.state_dict()
+    #             torch.save(states, path)
+    #             print("当前模型存储的路径是'./net_params.pth'")
+    #         else:
+    #             print("save model parameters")
+    #             path = './net_params_new.pth'
+    #             states = {}
+    #             for nn in self.dqn:
+    #                 index_model = 'model' + str(nn.ID) + '_dict'
+    #                 index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
+    #                 states[index_model] = self.dqn[nn.ID].policy_net.state_dict()
+    #                 states[index_optimizer] = self.dqn[nn.ID].optimizer.state_dict()
+    #             torch.save(states, path)
+    #             print("当前模型存储的路径是'./net_params_new.pth'")
     def save(self, opt, model_path):
-        if opt == 1:
-            if model_path == "./net_params.pth":
-                path = './net_params.pth'
-                states = {}
-                for nn in self.dqn:
-                    index_model = 'model' + str(nn.ID) + '_dict'
-                    index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
-                    states[index_model] = self.dqn[nn.ID].policy_net.state_dict()
-                    states[index_optimizer] = self.dqn[nn.ID].optimizer.state_dict()
-                torch.save(states, path)
-                print("当前模型存储的路径是'./net_params.pth'")
-            else:
-                print("save model parameters")
-                path = './net_params_new.pth'
-                states = {}
-                for nn in self.dqn:
-                    index_model = 'model' + str(nn.ID) + '_dict'
-                    index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
-                    states[index_model] = self.dqn[nn.ID].policy_net.state_dict()
-                    states[index_optimizer] = self.dqn[nn.ID].optimizer.state_dict()
-                torch.save(states, path)
-                print("当前模型存储的路径是'./net_params_new.pth'")
+        if opt != 1:
+            return  # 不需要保存时直接返回
 
+        # 构造状态字典
+        states = {}
+        for nn in self.dqn:
+            key_m = f"model{nn.ID}_dict"
+            key_o = f"optimizer{nn.ID}_dict"
+            states[key_m] = nn.policy_net.state_dict()
+            states[key_o] = nn.optimizer.state_dict()
+
+        # 直接保存到调用时传入的路径
+        torch.save(states, model_path)
+        print(f"当前模型存储的路径是 '{model_path}'")
+
+    # def load(self, model_path):
+    #     if model_path == "./net_params.pth":
+    #         print("读取已有模型")
+    #         print("当前模型读取的路径是'./net_params.pth'")
+    #         path = './net_params.pth'
+    #         if os.path.exists("net_params.pth"):
+    #             self.dqn = self.init_dqns()
+    #             checkpoint = torch.load(path)
+    #             for nn in self.dqn:
+    #                 index_model = 'model' + str(nn.ID) + '_dict'
+    #                 index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
+    #                 nn.policy_net.load_state_dict(checkpoint[index_model])
+    #                 nn.target_net.load_state_dict(checkpoint[index_model])
+    #                 nn.optimizer.load_state_dict(checkpoint[index_optimizer])
+    #     else:
+    #         print("当前模型读取的路径是'./net_params_new.pth'")
+    #         path = './net_params_new.pth'
+    #         if os.path.exists("net_params_new.pth"):
+    #             self.dqn = self.init_dqns()
+    #             checkpoint = torch.load(path)
+    #             for nn in self.dqn:
+    #                 index_model = 'model' + str(nn.ID) + '_dict'
+    #                 index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
+    #                 nn.policy_net.load_state_dict(checkpoint[index_model])
+    #                 nn.target_net.load_state_dict(checkpoint[index_model])
+    #                 nn.optimizer.load_state_dict(checkpoint[index_optimizer])
     def load(self, model_path):
-        if model_path == "./net_params.pth":
-            print("读取已有模型")
-            print("当前模型读取的路径是'./net_params.pth'")
-            path = './net_params.pth'
-            if os.path.exists("net_params.pth"):
-                self.dqn = self.init_dqns()
-                checkpoint = torch.load(path)
-                for nn in self.dqn:
-                    index_model = 'model' + str(nn.ID) + '_dict'
-                    index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
-                    nn.policy_net.load_state_dict(checkpoint[index_model])
-                    nn.target_net.load_state_dict(checkpoint[index_model])
-                    nn.optimizer.load_state_dict(checkpoint[index_optimizer])
-        else:
-            print("当前模型读取的路径是'./net_params_new.pth'")
-            path = './net_params_new.pth'
-            if os.path.exists("net_params_new.pth"):
-                self.dqn = self.init_dqns()
-                checkpoint = torch.load(path)
-                for nn in self.dqn:
-                    index_model = 'model' + str(nn.ID) + '_dict'
-                    index_optimizer = 'optimizer' + str(nn.ID) + '_dict'
-                    nn.policy_net.load_state_dict(checkpoint[index_model])
-                    nn.target_net.load_state_dict(checkpoint[index_model])
-                    nn.optimizer.load_state_dict(checkpoint[index_optimizer])
+        # 直接按传入路径加载模型状态
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"模型文件不存在：{model_path}")
+        print(f"读取模型文件：{model_path}")
+        # 重新初始化 DQN 实例列表
+        self.dqn = self.init_dqns()
+        # 加载所有子网络和优化器状态
+        checkpoint = torch.load(model_path, weights_only=False)
+        for nn in self.dqn:
+            model_key = f"model{nn.ID}_dict"
+            opt_key   = f"optimizer{nn.ID}_dict"
+            nn.policy_net.load_state_dict(checkpoint[model_key])
+            nn.target_net.load_state_dict(checkpoint[model_key])
+            nn.optimizer.load_state_dict(checkpoint[opt_key])
+
 
     def helper_calc_reward(self):
         state = F.one_hot(torch.tensor([0]), self.nnodes)

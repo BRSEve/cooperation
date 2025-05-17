@@ -63,6 +63,8 @@ class QAgent(object):
         }
         self.adjacency = dynetwork.adjacency_matrix
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.insecure_nodes = setting['Security']['insecure_nodes']
+        self.penalty_hop = setting['Security']['penalty_reward']
 
     """
 
@@ -95,10 +97,17 @@ class QAgent(object):
             else:
                 ''' obtains the next best neighbor to move the packet from its current node by referencing our neural network '''
                 with torch.no_grad():
-                    qvals = neural_network.policy_net(
-                        state.float())
+                    q_all = neural_network.policy_net(state.float())
+                    q_nei = q_all[:, neighbor].clone() 
+                    
+                    if self.insecure_nodes is not None:
+                        for i, nbr in enumerate(neighbor):
+                            if nbr in self.insecure_nodes:
+                                q_nei[0, i] -= self.penalty_hop
+
                     # policy_net输出的是每个node对应的q值
-                    next_step_idx = qvals[:, neighbor].argmax().item()
+                    next_step_idx = q_nei.argmax(dim=1).item()
+                    
                     # 然后在当前节点的邻居节点对应的q值中选
                     next_step = neighbor[next_step_idx]
                     if self.config['update_epsilon']:
