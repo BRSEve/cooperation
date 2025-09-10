@@ -57,18 +57,44 @@
     "DQN_test_opt_change": 1,
     "network_opt_test": 0
   },
-  "MultiSecurity": {
-    "attr_score": { "Core": 1.0, "Border": 0.7, "Unknown": 0.5 },
-    "node_attr": { "0": "Core", "1": "Border", "2": "Core" },
-    "beta_a0": 1.0,
-    "beta_b0": 1.0,
-    "beta_forget": 0.01,
-    "omega_nat": 0.30,
-    "omega_geo": 0.20,
-    "omega_net": 0.30,
-    "omega_rep": 0.20,
-    "lambda0": 0.2,
-    "risk_beta": 2.0,
-    "risk_delta": 0.05
+"MultiSecurity": {
+  "attr_score": { "Core": 1.0, "Border": 0.7, "Unknown": 0.5, "Malicious": 0.1 },
+  "node_attr": { "0": "Core", "1": "Border", "2": "Core" },
+
+  "beta_a0": 1.0,
+  "beta_b0": 1.0,
+  "beta_forget": 0.01,
+
+  "omega_nat": 0.30,
+  "omega_geo": 0.20,
+  "omega_net": 0.30,
+  "omega_rep": 0.20,
+
+  "lambda0": 0.2,
+  "risk_beta": 2.0,
+  "risk_delta": 0.05,
+
+  "malicious": {
+    "mode": "ratio",
+    "ratio": 0.10,
+    "count": null,
+    "seed": 42,
+    "resample_each_episode": 1,
+    "delay_factor": 1.0,
+    "drop_prob": 0.00
+  },
+
+  "attr_random": {
+    "enable": 1,    
+    "mode": "prob",    
+    "probs": {              
+      "Core": 0.25, "Border": 0.50, "Unknown": 0.25
+    },
+    "counts": null,  
+    "allow": ["Core","Border","Unknown"], 
+    "seed": 123,
+    "resample_each_episode": 1,  
+    "fixed_nodes": ["0","1","2"]      
   }
+}
 }
