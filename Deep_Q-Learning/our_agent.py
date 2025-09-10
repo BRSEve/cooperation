@@ -9,40 +9,17 @@ import json
 import torch.nn.functional as F
 import os
 
-
-'''Open file Setting.json which contains learning parameters. '''
 main_dir = os.path.dirname(os.path.realpath(__file__))
 main_dir = main_dir + '/'
 with open(main_dir + 'Setting.json') as f:
     setting = json.load(f)
-Experience = namedtuple(
-    'Experience',
-    ('state', 'action', 'next_state', 'reward')
-)
+
+Experience = namedtuple('Experience', ('state', 'action', 'next_state', 'reward'))
 train_times = setting["DQN"]["train_times"]
-'''
-    The agent file defines a learning agent and its hyperparameters
-    File contains functions:
-        generate_q_table: initialize Q-table
-        act: returns which next node to send packet to
-        learn: update Q-table after receiving corresponding rewards
 
-'''
 f = open("experiences", "a")
+
 class QAgent(object):
-    """
-
-        Initialize an instance of the agent class
-        learning rate: The amount of information that we wish to update our equation with, should be within (0,1]
-        epsilon: probability that packets move randomly, instead of referencing routing policy
-        discount: Degree to which we wish to maximize future rewards, value between (0,1)
-        decay_rate: decays epsilon
-        update_epsilon: utilized in our_env.router, only allows epsilon to decay once per time-step
-        self.q: stores q-values
-        *_memory: different methods of sampling from our memory bank
-
-    """
-
     def __init__(self, dynetwork):
         self.config = {
             "nodes": dynetwork.num_nodes,
@@ -59,189 +36,117 @@ class QAgent(object):
             "update_epsilon": False,
             "update_models": torch.zeros([1, dynetwork.num_nodes], dtype=torch.bool),
             "entered": 0,
-
         }
         self.adjacency = dynetwork.adjacency_matrix
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.insecure_nodes = setting['Security']['insecure_nodes']
-        self.penalty_hop = setting['Security']['penalty_reward']
 
-    """
-
-    act is a function that gives a packet the next best action (if possible)
-        learning rate: The amount of information that we wish to update our equation with, should be within (0,1]
-        epsilon: probability that packets move randomly, instead of referencing routing policy
-        discount: Degree to which we wish to maximize future rewards, value between (0,1)
-        decay_rate: decays epsilon
-        update_epsilon: utilized in our_env.router, only allows epsilon to decay once per time-step
-        self.q: stores q-values
-        *_memory: different methods of sampling from our memory bank
-
-    """
-
-    def act(self, neural_network, state, neighbor):
-        ''' We will either random walk or reference Q-table with probability epsilon '''
-        # 在0，1之间随机生成一个数，然后和ε比较
+    def act(self, neural_network, state, neighbor, sec_penalty=None):
+        """
+        ε-greedy；利用时对每个邻居动作的 Q 值减去传入的安全惩罚（越安全惩罚越小）。
+        """
         if random.uniform(0, 1) < self.config['epsilon']:
-            # 当生成的数比ε小时，先判断是否有可行的邻居，如果有，在邻居中随机选择一个，作为下一步next_step
-            ''' We will either random walk or reference Q-table with probability epsilon '''
-            if not bool(neighbor):
-                # checks if the packet's current node has any available neighbors
-                return None
-            else:
-                next_step = random.choice(neighbor)  # Explore action space
-        # 当生成的数比ε大时，先判断是否有可行的邻居，如果有，利用policy_net获取最大的q-value，然后选作下一步
+            return None if not neighbor else random.choice(neighbor)
         else:
-            if not bool(neighbor):
+            if not neighbor:
                 return None
-            else:
-                ''' obtains the next best neighbor to move the packet from its current node by referencing our neural network '''
-                with torch.no_grad():
-                    q_all = neural_network.policy_net(state.float())
-                    q_nei = q_all[:, neighbor].clone() 
-                    
-                    if self.insecure_nodes is not None:
-                        for i, nbr in enumerate(neighbor):
-                            if nbr in self.insecure_nodes:
-                                q_nei[0, i] -= self.penalty_hop
-
-                    # policy_net输出的是每个node对应的q值
-                    next_step_idx = q_nei.argmax(dim=1).item()
-                    
-                    # 然后在当前节点的邻居节点对应的q值中选
-                    next_step = neighbor[next_step_idx]
-                    if self.config['update_epsilon']:
-                        self.config['epsilon'] = self.config["decay_rate"] * \
-                            self.config['epsilon']
-                        self.config['update_epsilon'] = False
-        return next_step
-
-    '''
-        Updates replay memory with current experience
-        and takes sample of previous experience
-    '''
+            with torch.no_grad():
+                qvals = neural_network.policy_net(state.float())
+                scores = qvals[:, neighbor].clone()
+                if sec_penalty is not None and len(neighbor) > 0:
+                    pen = torch.tensor(sec_penalty, dtype=scores.dtype, device=scores.device).view(1, -1)
+                    scores = scores - pen
+                next_step_idx = scores.argmax().item()
+                next_step = neighbor[next_step_idx]
+                if self.config['update_epsilon']:
+                    self.config['epsilon'] = self.config["decay_rate"] * self.config['epsilon']
+                    self.config['update_epsilon'] = False
+            return next_step
 
     def learn(self, nn, dqns, current_event, action, reward, next_state):
-        ''' skip if no valid action or no reward is provided '''
-        if (action == None) or (reward == None):
-            pass
-        else:
-            if current_event != None:
-                nn.replay_memory.push(current_event, action, next_state, reward)
-                f.writelines(["nn.ID's memory: " + str([nn.ID]) + "\n"])
-                f.writelines(["experience--State: " + str([current_event]) + "\n"])
-                f.writelines(["experience--action: " + str([action]) + "\n"])
-                f.writelines(["experience--next_state: " + str([next_state]) + "\n"])
-                f.writelines(["experience--reward: " + str([reward]) + "\n"])
-            ''' check if our memory bank has sufficient memories to sample from '''
-            if (self.config["update_models"][:, nn.ID]) & (nn.replay_memory.can_provide_sample(self.config['batch_size'])):
+        if (action is None) or (reward is None):
+            return
+        if current_event is not None:
+            nn.replay_memory.push(current_event, action, next_state, reward)
+            f.writelines([f"nn.ID's memory: {[nn.ID]}\n"])
+            f.writelines([f"experience--State: {[current_event]}\n"])
+            f.writelines([f"experience--action: {[action]}\n"])
+            f.writelines([f"experience--next_state: {[next_state]}\n"])
+            f.writelines([f"experience--reward: {[reward]}\n"])
 
-                '''check which type of memories to pull'''
-                if self.config['sample_memory']:
-                    experiences = nn.replay_memory.sample(
-                        self.config['batch_size'])
+        if (self.config["update_models"][:, nn.ID]) & (nn.replay_memory.can_provide_sample(self.config['batch_size'])):
+            if self.config['sample_memory']:
+                experiences = nn.replay_memory.sample(self.config['batch_size'])
+            elif self.config['recent_memory']:
+                experiences = nn.replay_memory.take_recent(self.config['batch_size'])
+            elif self.config['priority_memory']:
+                experiences, experiences_idx = nn.replay_memory.take_priority(self.config['batch_size'])
 
-                elif self.config['recent_memory']:
-                    experiences = nn.replay_memory.take_recent(
-                        self.config['batch_size'])
+            states, actions, next_states, rewards = self.extract_tensors(experiences)
+            next_states = next_states.to(self.device)
+            rewards = rewards.to(self.device)
 
-                elif self.config['priority_memory']:
-                    experiences, experiences_idx = nn.replay_memory.take_priority(
-                        self.config['batch_size'])
+            current_q_values = self.get_current_QVal(nn.policy_net, states, actions)
+            next_q_values = self.get_next_QVal(dqns, next_states, actions)
+            target_q_values = (next_q_values * self.config['gamma']) + rewards
 
-                states, actions, next_states, rewards = self.extract_tensors(
-                    experiences)
-                next_states = next_states.to(self.device)
-                rewards = rewards.to(self.device)
-                '''extract values from experiences'''
-                current_q_values = self.get_current_QVal(
-                    nn.policy_net, states, actions)
+            if self.config['priority_memory']:
+                nn.replay_memory.update_priorities(experiences_idx, current_q_values, torch.transpose(target_q_values, 0, 1))
 
-                next_q_values = self.get_next_QVal(
-                    dqns, next_states, actions)
-
-                target_q_values = (
-                    next_q_values * self.config['gamma']) + rewards
-
-                '''update priority memory's probability'''
-                if self.config['priority_memory']:
-                    nn.replay_memory.update_priorities(
-                        experiences_idx, current_q_values, torch.transpose(target_q_values, 0, 1))
-
-                '''backpropagation to update neural network'''
-                loss = F.mse_loss(current_q_values,
-                                  torch.transpose(target_q_values, 0, 1))
-                # print("loss:", loss)
-                nn.optimizer.zero_grad()
-                loss.backward()
-                nn.optimizer.step()
-
-
-
-    ''' helper function to extract values from our stored experiences'''
+            loss = F.mse_loss(current_q_values, torch.transpose(target_q_values, 0, 1))
+            nn.optimizer.zero_grad()
+            loss.backward()
+            nn.optimizer.step()
 
     def extract_tensors(self, experiences):
         states = torch.cat(tuple(exps[0] for exps in experiences))
-        actions = torch.cat(
-            tuple(torch.tensor([exps[1]]) for exps in experiences))
+        actions = torch.cat(tuple(torch.tensor([exps[1]]) for exps in experiences))
         next_states = torch.cat(tuple(exps[2] for exps in experiences))
-        rewards = torch.cat(
-            tuple(torch.tensor([exps[3]]) for exps in experiences))
+        rewards = torch.cat(tuple(torch.tensor([exps[3]]) for exps in experiences))
         return (states, actions, next_states, rewards)
-
-    ''' helper function to obtain the Q-val of current state'''
 
     def get_current_QVal(self, policy_net, states, actions):
         states = states.to(self.device)
         actions = actions.type(torch.int64).to(self.device)
-        # print("actions", actions)
-        # print("actions.dtype:", actions.dtype)
-        # states = torch.cat(tuple(exps[0] for exps in experiences），生成是一个n,1大小的张量
         return policy_net(states.float()).gather(dim=1, index=actions.unsqueeze(-1))
 
-    ''' helper function to obtain the Q-val of the next state'''
-
     def get_next_QVal(self, dqns, next_states, actions):
-        ''' need to apply neighbors mask to target_net() prior to taking the maximum '''
-        non_terminal_idx = []
-        for idx in range(next_states.shape[0]):
-            action = actions[idx].numpy()
-            flag = 0
-            for i in next_states[idx]:
-                if i == 1:
-                    index = flag
-                    # print("index", index)
-                    break
-                flag += 1
-            if action != index:
-                non_terminal_idx.append(True)
+        """
+        计算下一状态的目标Q值：
+        - 用动作对应的 target_net 评估 next_states；
+        - 只在 “未到达目的地” 的样本上取 “邻居可达动作” 的最大Q；
+        - 统一使用 PyTorch 的 bool 掩码索引，避免 NumPy 布尔索引导致的类型错误。
+        """
+        # batch size
+        batch_size = next_states.shape[0]
+
+        # 每个样本的“目的地索引”（one-hot中 1 的位置）
+        # （比手工 for 循环快而且更稳）
+        dest_indices = torch.argmax(next_states, dim=1).detach().cpu().tolist()
+
+        # 动作索引（转到 CPU/NumPy，确保是纯 int）
+        act_indices = actions.detach().cpu().numpy().astype(int)
+
+        # 对每个样本，用“该样本采取的动作所对应的网络”来估计 next_state 的 Q 向量
+        # 形状：[B, num_nodes]
+        all_q = torch.empty(batch_size, self.config['nodes'], device=self.device)
+        for i, a_idx in enumerate(act_indices):
+            all_q[i] = dqns[a_idx].target_net(next_states[i].float())
+
+        # 结果容器：[B]
+        values = torch.zeros(batch_size, device=self.device)
+
+        for i in range(batch_size):
+            # 若动作 == 目的地索引，则该样本为“终止”，目标Q取0
+            if int(act_indices[i]) != int(dest_indices[i]):
+                # adjacency 是 NumPy 数组；先得到 NumPy 的布尔掩码，再转为 torch.bool
+                adjs_np = (self.adjacency[act_indices[i]] == 1)           # np.bool_ 数组
+                adjs_mask = torch.from_numpy(adjs_np).to(self.device)     # torch.bool 张量
+
+                # 在 PyTorch 中用 bool 掩码安全索引
+                values[i] = torch.max(all_q[i][adjs_mask]).detach()
             else:
-                non_terminal_idx.append(False)
-        non_terminal_idx_tensor = torch.tensor(non_terminal_idx)
-        temp1 = torch.empty(self.config['batch_size'], self.config['nodes'])
-        # print("temp1's size:", temp1.size())
-        actions_idxs = actions.numpy()
-        # print("actions_idxs:", actions_idxs)
-        index = 0
-        for idx in actions_idxs:
-            # print("idx:", idx)
-            temp = dqns[idx].target_net(next_states[index].float())
-            # print("temp:",temp)
-            temp1[index] = temp
-            index += 1
-        # print("temp1:",temp1)
-        ''' initialize zero value vectors '''
-        batch_size = next_states.shape[0]   # next_states形状为n行1列，所以batch_size=n
-        values = torch.zeros(batch_size).view(1, -1).to(self.device)
-        # value的形状为1行n列
+                values[i] = 0.0
 
-        ''' update non-terminal state with Q value '''
-        for idx in range(values.size()[1]):   # 遍历次数为列数
-            if non_terminal_idx_tensor[idx]:
-                # print("non_terminal_idx_tensor[idx]:", non_terminal_idx_tensor[idx])
-                adjs = (self.adjacency[actions[idx]] == 1)
-                temp2 = temp1[idx, :].view(1, -1)  # [idx, :]表示取矩阵的第几行
-                values[0, idx] = torch.max(temp2[0, adjs]).detach()
-
-        return values
+        # 与原函数返回形状保持一致：[1, B]
+        return values.view(1, -1)
 

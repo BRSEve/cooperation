@@ -212,3 +212,5 @@ pyrightconfig.json
 Deep_Q-Learning/__pycache__/
 Deep_Q-Learning/experiences
 Deep_Q-Learning/DQN_Times
+
+Deep_Q-Learning/models
