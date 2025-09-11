@@ -306,6 +306,8 @@ class dynetworkEnv(gym.Env):
         node_queue_lengths = [0]
         num_nodes_at_capacity = 0
         num_nonEmpty_nodes = 0
+        self._chosen_cts = []                     # 每个时间步开始前清空
+
         for nodeIdx in self.dynetwork._network.nodes:
             self.nodes_traversed += 1
             if self.nodes_traversed == self.nnodes:
@@ -513,7 +515,7 @@ class dynetworkEnv(gym.Env):
 
         # 拥塞/重传（失败）
         receiving_capacity = self.max_queue - self.max_transmit
-        if len(self.dynetwork._network.nodes[pkt.get_curPos()]['receiving_queue']) >= receiving_capacity:
+        if len(self.dynetwork._network.nodes[next_step]['receiving_queue']) >= receiving_capacity:
             self.dynetwork._packets.packetList[self.packet]._times += 1
             if self.dynetwork._packets.packetList[self.packet]._times < 10:
                 self.curr_queue.remove(self.packet)

@@ -66,26 +66,26 @@
 
   "beta_a0": 1.0,
   "beta_b0": 1.0,
-  "beta_forget": 0.01,
+  "beta_forget": 0.05,
 
   "omega_nat": 0.30,
   "omega_geo": 0.20,
   "omega_net": 0.30,
   "omega_rep": 0.20,
 
-  "lambda0": 0.6,
+  "lambda0": 0.8,
   "risk_beta": 1.0,
-  "risk_delta": 0.20,
-  "penalty_alpha": 2.0,
+  "risk_delta": 0.40,
+  "penalty_alpha": 3.0,
 
   "malicious": {
     "mode": "ratio",
-    "ratio": 0.10,
+    "ratio": 0.15,
     "count": null,
     "seed": 42,
     "resample_each_episode": 1,
-    "delay_factor": 1.0,
-    "drop_prob": 0.00
+    "delay_factor": 2.0,
+    "drop_prob": 0.10
   },
 
   "attr_random": {

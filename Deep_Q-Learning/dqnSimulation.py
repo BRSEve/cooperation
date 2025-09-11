@@ -316,8 +316,8 @@ if test_opt == 1:
                 rows = env.pop_cts_history()
                 if rows:
                     append_cts_rows(rows)
-                    last_dqn_cts_series = _rows_to_series(rows, "DQN")
-                    dqn_avg_cts[i].append(_mean_cts(rows, "DQN"))   # <<< 新增
+                    last_sp_cts_series = _rows_to_series(rows, "SP")
+                    sp_avg_cts[i].append(_mean_cts(rows, "SP"))   # <<< 新增
 
                 sp_avg_delivs[i].append(sp_avg_deliv)
                 sp_avg_deliv_ratios[i].append(sp_avg_deliv_ratio)
