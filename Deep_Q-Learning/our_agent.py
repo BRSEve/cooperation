@@ -1,3 +1,4 @@
+# our_agent.py
 from collections import namedtuple
 import numpy as np
 import random
@@ -116,37 +117,21 @@ class QAgent(object):
         - 只在 “未到达目的地” 的样本上取 “邻居可达动作” 的最大Q；
         - 统一使用 PyTorch 的 bool 掩码索引，避免 NumPy 布尔索引导致的类型错误。
         """
-        # batch size
         batch_size = next_states.shape[0]
-
-        # 每个样本的“目的地索引”（one-hot中 1 的位置）
-        # （比手工 for 循环快而且更稳）
         dest_indices = torch.argmax(next_states, dim=1).detach().cpu().tolist()
-
-        # 动作索引（转到 CPU/NumPy，确保是纯 int）
         act_indices = actions.detach().cpu().numpy().astype(int)
 
-        # 对每个样本，用“该样本采取的动作所对应的网络”来估计 next_state 的 Q 向量
-        # 形状：[B, num_nodes]
         all_q = torch.empty(batch_size, self.config['nodes'], device=self.device)
         for i, a_idx in enumerate(act_indices):
             all_q[i] = dqns[a_idx].target_net(next_states[i].float())
 
-        # 结果容器：[B]
         values = torch.zeros(batch_size, device=self.device)
-
         for i in range(batch_size):
-            # 若动作 == 目的地索引，则该样本为“终止”，目标Q取0
             if int(act_indices[i]) != int(dest_indices[i]):
-                # adjacency 是 NumPy 数组；先得到 NumPy 的布尔掩码，再转为 torch.bool
-                adjs_np = (self.adjacency[act_indices[i]] == 1)           # np.bool_ 数组
-                adjs_mask = torch.from_numpy(adjs_np).to(self.device)     # torch.bool 张量
-
-                # 在 PyTorch 中用 bool 掩码安全索引
+                adjs_np = (self.adjacency[act_indices[i]] == 1)
+                adjs_mask = torch.from_numpy(adjs_np).to(self.device)
                 values[i] = torch.max(all_q[i][adjs_mask]).detach()
             else:
                 values[i] = 0.0
 
-        # 与原函数返回形状保持一致：[1, B]
         return values.view(1, -1)
-

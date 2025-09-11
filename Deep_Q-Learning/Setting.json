@@ -35,7 +35,7 @@
     "use_priority_memory": 0
   },
   "Simulation": {
-    "training_episodes": 3,
+    "training_episodes": 5,
     "max_allowed_time_step_per_episode": 200,
     "num_time_step_to_update_target_network": 10,
     "test_network_load_min": 250,
@@ -57,48 +57,47 @@
     "DQN_test_opt_change": 1,
     "network_opt_test": 0
   },
-"MultiSecurity": {
-  "attr_score": { "Core": 1.0, "Border": 0.7, "Unknown": 0.5, "Malicious": 0.1 },
-  "node_attr": {
-    "1": "Unknown", "3": "Unknown", "5": "Unknown", "7": "Unknown", "9": "Unknown",
-    "11": "Unknown", "13": "Unknown", "15": "Unknown", "17": "Unknown", "19": "Unknown"
-  },
-
-  "beta_a0": 1.0,
-  "beta_b0": 1.0,
-  "beta_forget": 0.05,
-
-  "omega_nat": 0.30,
-  "omega_geo": 0.20,
-  "omega_net": 0.30,
-  "omega_rep": 0.20,
-
-  "lambda0": 0.8,
-  "risk_beta": 1.0,
-  "risk_delta": 0.40,
-  "penalty_alpha": 3.0,
-
-  "malicious": {
-    "mode": "ratio",
-    "ratio": 0.15,
-    "count": null,
-    "seed": 42,
-    "resample_each_episode": 1,
-    "delay_factor": 2.0,
-    "drop_prob": 0.10
-  },
-
-  "attr_random": {
-    "enable": 1,    
-    "mode": "prob",    
-    "probs": {              
-      "Core": 0.25, "Border": 0.50, "Unknown": 0.25
+  "MultiSecurity": {
+    "attr_score": { "Core": 1.0, "Border": 0.7, "Unknown": 0.5, "Malicious": 0.1 },
+    "node_attr": {
+      "1": "Unknown", "3": "Unknown", "5": "Unknown", "7": "Unknown", "9": "Unknown",
+      "11": "Unknown", "13": "Unknown", "15": "Unknown", "17": "Unknown", "19": "Unknown"
     },
-    "counts": null,  
-    "allow": ["Core","Border","Unknown"], 
-    "seed": 123,
-    "resample_each_episode": 1,  
-    "fixed_nodes": ["0","1","2"]      
+
+    "beta_a0": 1.0,
+    "beta_b0": 1.0,
+    "beta_forget": 0.05,
+
+    "omega_nat": 0.10,
+    "omega_geo": 0.10,
+    "omega_net": 0.45,
+    "omega_rep": 0.35,
+
+    "lambda0": 0.80,
+    "lambda_min": 0.10,
+    "risk_beta": 1.0,
+    "risk_delta": 0.40,
+    "penalty_alpha": 3.0,
+
+    "malicious": {
+      "mode": "ratio",
+      "ratio": 0.15,
+      "count": null,
+      "seed": 42,
+      "resample_each_episode": 0,
+      "delay_factor": 2.0,
+      "drop_prob": 0.10
+    },
+
+    "attr_random": {
+      "enable": 1,
+      "mode": "prob",
+      "probs": { "Core": 0.25, "Border": 0.50, "Unknown": 0.25 },
+      "counts": null,
+      "allow": ["Core","Border","Unknown"],
+      "seed": 123,
+      "resample_each_episode": 0,
+      "fixed_nodes": ["0","1","2"]
+    }
   }
-}
 }

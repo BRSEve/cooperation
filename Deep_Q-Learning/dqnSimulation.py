@@ -1,3 +1,4 @@
+# dqnSimulation.py
 from math import e
 import sys
 from datetime import datetime
@@ -76,10 +77,6 @@ if train_times != 0:
 CTS_LOG_PATH = "./logs/cts_log.csv"
 os.makedirs(os.path.dirname(CTS_LOG_PATH), exist_ok=True)
 
-# === CTS 日志文件设置 ===
-CTS_LOG_PATH = "./logs/cts_log.csv"
-os.makedirs(os.path.dirname(CTS_LOG_PATH), exist_ok=True)
-
 def append_cts_rows(rows, csv_path=CTS_LOG_PATH):
     """rows: [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep, policy), ...]"""
     header = ["episode", "timestep", "lambda_t", "avg_cts", "min_cts", "max_cts", "avg_rep", "policy"]
@@ -90,8 +87,9 @@ def append_cts_rows(rows, csv_path=CTS_LOG_PATH):
             writer.writerow(header)
         writer.writerows(rows)
 
+# ===================== 训练 =====================
 for i_episode in range(numEpisode):
-    env.begin_episode(i_episode + 1)   # <<< 新增：标记当前 episode
+    env.begin_episode(i_episode + 1)   # 标记当前 episode（用于 CTS 日志）
     print("---------- Episode:", i_episode+1, " ----------")
     step = []
     deliveries = []
@@ -160,6 +158,7 @@ if learning_plot == 1:
 
 env.save(setting["Simulation"]["whether_save"], model_path)
 
+# ===================== 测试 =====================
 test_opt = setting["Simulation"]["whether_test"]
 network_opt = setting["Simulation"]["network_opt_test"]
 
@@ -217,6 +216,10 @@ if test_opt == 1:
     print("Current_Train_Time =", start_time)
     agent.config['epsilon'] = 0.01
     agent.config['decay_rate'] = 1
+
+    # ★ 测试阶段固定“安全环境”不重采，确保 DQN 与 SP 可比
+    env.attr_rand_resample_each_episode = False
+    env.mal_resample_each_episode = False
 
     def Test(currTrial, curLoad, SP=False):
         step = []
@@ -288,36 +291,37 @@ if test_opt == 1:
                 print("测试节点不变的dqn的结果")
 
                 ep_counter_for_test += 1
-                env.begin_episode(ep_counter_for_test)   # 让本次测试的 CTS 带上唯一 episode
+                env.begin_episode(ep_counter_for_test)
 
                 dqn_avg_deliv, dqn_avg_deliv_ratio, dqn_congestions_number, dqn_retransmission_ratio = Test(currTrial, curLoad, SP=False)
 
-                # --- 在 Test(...) 之后立刻 ---
+                # --- 写入 DQN 的 CTS 记录 ---
                 rows = env.pop_cts_history()
                 if rows:
                     append_cts_rows(rows)
                     last_dqn_cts_series = _rows_to_series(rows, "DQN")
-                    dqn_avg_cts[i].append(_mean_cts(rows, "DQN"))   # <<< 新增
+                    dqn_avg_cts[i].append(_mean_cts(rows, "DQN"))
 
                 dqn_avg_delivs[i].append(dqn_avg_deliv)
                 dqn_avg_deliv_ratios[i].append(dqn_avg_deliv_ratio)
                 dqn_retransmission_ratios[i].append(dqn_retransmission_ratio)
                 dqn_congestions_numbers[i].append(dqn_congestions_number)
+
             if SP_test_opt == 1:
                 env.reset(curLoad, False, False)
                 print("测试节点不变的sp的结果")
 
                 ep_counter_for_test += 1
-                env.begin_episode(ep_counter_for_test)   # 让本次测试的 CTS 带上唯一 episode
+                env.begin_episode(ep_counter_for_test)
 
                 sp_avg_deliv, sp_avg_deliv_ratio, sp_congestions_number, sp_retransmission_ratio = Test(currTrial, curLoad, SP=True)
 
-                # --- 在 Test(...) 之后立刻 ---
+                # --- 写入 SP 的 CTS 记录 ---
                 rows = env.pop_cts_history()
                 if rows:
                     append_cts_rows(rows)
                     last_sp_cts_series = _rows_to_series(rows, "SP")
-                    sp_avg_cts[i].append(_mean_cts(rows, "SP"))   # <<< 新增
+                    sp_avg_cts[i].append(_mean_cts(rows, "SP"))
 
                 sp_avg_delivs[i].append(sp_avg_deliv)
                 sp_avg_deliv_ratios[i].append(sp_avg_deliv_ratio)

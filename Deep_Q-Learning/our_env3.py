@@ -1,3 +1,4 @@
+# our_env3.py
 import json
 import torch.nn.functional as F
 import torch
@@ -74,28 +75,22 @@ class dynetworkEnv(gym.Env):
 
         # 节点静态属性
         self.attr_score = ms.get("attr_score", {"Core": 1.0, "Border": 0.7, "Unknown": 0.5, "Malicious": 0.1})
-        # 若配置里没给 Malicious，兜底低分
         if "Malicious" not in self.attr_score:
             self.attr_score["Malicious"] = 0.1
         self.node_attr = ms.get("node_attr", {})
 
-        # ======== 随机分配节点安全属性（新增）========
+        # ======== 随机分配节点安全属性 ========
         attr_rand = ms.get("attr_random", {})
         self.attr_rand_enable = bool(int(attr_rand.get("enable", 0)))
-        self.attr_rand_mode   = attr_rand.get("mode", "prob")  # "prob" or "count"
-        self.attr_rand_probs  = attr_rand.get("probs", None)   # {"Core":0.3,"Border":0.5,"Unknown":0.2}
-        self.attr_rand_counts = attr_rand.get("counts", None)  # {"Core":10,"Border":20,"Unknown":19}
+        self.attr_rand_mode   = attr_rand.get("mode", "prob")
+        self.attr_rand_probs  = attr_rand.get("probs", None)
+        self.attr_rand_counts = attr_rand.get("counts", None)
         self.attr_rand_seed   = attr_rand.get("seed", None)
         self.attr_rand_resample_each_episode = bool(int(attr_rand.get("resample_each_episode", 0)))
-
-        # 允许参与随机的类别（默认为 attr_score 去掉 "Malicious"）
         allow_default = [k for k in self.attr_score.keys() if k != "Malicious"]
         self.attr_rand_allow = attr_rand.get("allow", allow_default)
-
-        # 明确指定的固定节点（这些节点沿用 node_attr，不参与随机）
         fixed_nodes_cfg = attr_rand.get("fixed_nodes", [])
         self.attr_rand_fixed_nodes = set(int(str(n)) for n in fixed_nodes_cfg)
-
         self._attr_rng = np.random.default_rng(self.attr_rand_seed)
 
         # Beta 信誉
@@ -117,25 +112,25 @@ class dynetworkEnv(gym.Env):
 
         # 动态惩罚强度 λ_t
         self.lambda_t   = float(ms.get("lambda0", 0.2))
+        self.lambda_min = float(ms.get("lambda_min", 0.10))
         self.risk_beta  = float(ms.get("risk_beta", 2.0))
         self.risk_delta = float(ms.get("risk_delta", 0.05))
         self.penalty_alpha = float(ms.get("penalty_alpha", 2.0))
 
-
-        # ======== 随机恶意节点（新增）========
+        # ======== 随机恶意节点 ========
         mal_cfg = ms.get("malicious", {})
-        self.mal_mode   = mal_cfg.get("mode", "ratio")              # "ratio" or "count"
-        self.mal_ratio  = float(mal_cfg.get("ratio", 0.0))          # 比例（0~1）
+        self.mal_mode   = mal_cfg.get("mode", "ratio")
+        self.mal_ratio  = float(mal_cfg.get("ratio", 0.0))
         self.mal_count  = (None if mal_cfg.get("count") is None else int(mal_cfg.get("count")))
         self.mal_seed   = mal_cfg.get("seed", None)
         self.mal_resample_each_episode = bool(int(mal_cfg.get("resample_each_episode", 0)))
-        self.mal_delay_factor = float(mal_cfg.get("delay_factor", 1.0))   # 恶意节点延迟放大系数（≥1.0）
-        self.mal_drop_prob    = float(mal_cfg.get("drop_prob", 0.0))      # 黑洞丢包概率（0~1）
-        self._mal_rng = np.random.default_rng(self.mal_seed)               # 可复现
+        self.mal_delay_factor = float(mal_cfg.get("delay_factor", 1.0))
+        self.mal_drop_prob    = float(mal_cfg.get("drop_prob", 0.0))
+        self._mal_rng = np.random.default_rng(self.mal_seed)
         self._malicious_nodes = set()
-        self._baseline_node_attr = dict(self.node_attr)  # 便于每轮重置
+        self._baseline_node_attr = dict(self.node_attr)
 
-        # ---- 地图初始化（原样）----
+        # ---- 地图初始化 ----
         script_dir = os.path.dirname(__file__)
         results_dir = os.path.join(script_dir, 'q-learning/')
         if self.network_use == "new":
@@ -194,10 +189,12 @@ class dynetworkEnv(gym.Env):
         self._positions = positions
 
         # === CTS 日志缓存 ===
-        self._cts_history = []    # [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep), ...]
-        self._cur_episode = 0     # 当前训练轮次（由外部设置）
+        self._cts_history = []     # [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep, policy), ...]
+        self._cur_episode = 0
+        self._chosen_cts = []
+        self._last_step_chosen_cts = 0.0
 
-        # === 随机分配节点安全属性（如启用） ===
+        # === 随机分配节点安全属性 ===
         if self.attr_rand_enable:
             self._randomize_node_attrs(initial=True)
         else:
@@ -228,9 +225,8 @@ class dynetworkEnv(gym.Env):
 
     def _geo_score(self, node: int) -> float:
         """
-        基于“邻接边平均时延”的反向安全度：
-        avg_delay_norm = mean(edge_delay) / max_edge_weight
-        geo = clip(1 - avg_delay_norm, 0, 1)
+        基于邻接边平均时延的反向安全度：
+        geo = clip(1 - mean(edge_delay)/max_edge_weight, 0, 1)
         """
         nbs = list(self.dynetwork._network.neighbors(node))
         if not nbs:
@@ -263,33 +259,34 @@ class dynetworkEnv(gym.Env):
             return []
         return [self.lambda_t * ((1.0 - self._node_cts(j)) ** self.penalty_alpha) for j in neighbors]
 
-
     def _update_lambda(self):
+        """λ 根据信誉 + CTS 的整体风险自适应，并设置下限 lambda_min。"""
         if self.nnodes <= 0:
             return
         avg_rep = np.mean([self._beta_expected(i) for i in range(self.nnodes)])
-        risk = (1.0 - avg_rep) ** self.risk_beta
-        self.lambda_t = float(max(0.0, min(1.0, (1.0 - self.risk_delta) * self.lambda_t + self.risk_delta * risk)))
+        avg_cts = np.mean([self._node_cts(i) for i in range(self.nnodes)])
+        risk_rep = (1.0 - avg_rep) ** self.risk_beta
+        risk_cts = (1.0 - avg_cts) ** self.risk_beta
+        risk = 0.5 * risk_rep + 0.5 * risk_cts
+        new_lambda = (1.0 - self.risk_delta) * self.lambda_t + self.risk_delta * risk
+        self.lambda_t = float(max(self.lambda_min, min(1.0, new_lambda)))
 
-    # ---------- 恶意节点相关（新增） ----------
+    # ---------- 恶意节点 ----------
     def _assign_malicious_nodes(self, initial=False):
-        """抽样并标记恶意节点；同步刷新 node_attr 与图属性 'is_malicious'。"""
         n = self.nnodes
         if self.mal_mode == "count" and self.mal_count is not None:
             k = int(self.mal_count)
-        else:  # ratio
+        else:
             k = int(np.floor(self.mal_ratio * n + 1e-9))
         k = max(0, min(n, k))
 
         choices = self._mal_rng.choice(n, size=k, replace=False).tolist() if k > 0 else []
         self._malicious_nodes = set(int(i) for i in choices)
 
-        # 还原到基线属性，再覆写为 Malicious
         self.node_attr = dict(self._baseline_node_attr)
         for idx in self._malicious_nodes:
             self.node_attr[str(int(idx))] = "Malicious"
 
-        # 同步到图属性
         attrs = {int(i): {'is_malicious': 1} for i in self._malicious_nodes}
         nx.set_node_attributes(self.dynetwork._network, {i: {'is_malicious': 0} for i in self.dynetwork._network.nodes})
         if attrs:
@@ -303,11 +300,12 @@ class dynetworkEnv(gym.Env):
 
     # ---------- 主流程 ----------
     def router(self, agent, t, will_learn=True, SP=False):
+        # 收集“本时间步被选中下一跳”的 CTS，用于增强区分度
+        self._chosen_cts = []
+
         node_queue_lengths = [0]
         num_nodes_at_capacity = 0
         num_nonEmpty_nodes = 0
-        self._chosen_cts = []                     # 每个时间步开始前清空
-
         for nodeIdx in self.dynetwork._network.nodes:
             self.nodes_traversed += 1
             if self.nodes_traversed == self.nnodes:
@@ -367,6 +365,11 @@ class dynetworkEnv(gym.Env):
                         action = agent.act(self.dqn[pkt_state[0]], cur_state, nlist, sec_penalty=sec_penalties)
 
                 reward, self.remaining, self.curr_queue, action = self.step(action, pkt_state[0])
+
+                # 统计“被选中下一跳”的 CTS（无论成功/失败，都代表了策略的实时偏好）
+                if action is not None:
+                    self._chosen_cts.append(self._node_cts(action))
+
                 if reward is not None:
                     sendctr += 1
 
@@ -383,6 +386,7 @@ class dynetworkEnv(gym.Env):
 
             node['sending_queue'] = self.remaining + node['sending_queue']
 
+        # 统计队列与丢包
         if len(node_queue_lengths) > 1:
             self.dynetwork._avg_q_len_arr.append(np.average(node_queue_lengths[1:]))
         self.dynetwork._num_capacity_node.append(num_nodes_at_capacity)
@@ -391,24 +395,32 @@ class dynetworkEnv(gym.Env):
         self.dynetwork._congestions.append(self.dynetwork._num_congestions)
         self.dynetwork._retransmission.append(self.dynetwork._num_retransmission)
 
+        # 记录本步“被选中下一跳 CTS”的均值（供上层写日志）
+        self._last_step_chosen_cts = float(np.mean(self._chosen_cts)) if self._chosen_cts else 0.0
+
     def updateWhole(self, agent, t, learn=True,  SP=False, savesteps=False):
         self.purgatory(False)
         self.update_queues(False)
         self.update_time(False)
         self.router(agent, t, learn, SP)
         self._update_lambda()
+
         # —— 记录本时间步的 CTS 快照到缓存 —— 
-        avg_cts, min_cts, max_cts, avg_rep = self._snapshot_cts()
-        policy = "SP" if SP else "DQN"           # <<< 新增：策略标签
+        # 原口径：网络平均 CTS；现口径：被选中下一跳 CTS 的均值（更能体现策略差异）
+        avg_cts_all, min_cts, max_cts, avg_rep = self._snapshot_cts()
+        chosen_avg = getattr(self, "_last_step_chosen_cts", 0.0)
+        avg_cts = chosen_avg if chosen_avg > 0.0 else avg_cts_all
+
+        policy = "SP" if SP else "DQN"
         self._cts_history.append((
-            int(self._cur_episode),              # episode
-            int(t),                              # timestep
-            float(self.lambda_t),                # 动态惩罚强度
-            float(avg_cts),                      # 平均 CTS
-            float(min_cts),                      # 最小 CTS
-            float(max_cts),                      # 最大 CTS
-            float(avg_rep),                      # 平均信誉
-            policy                               # <<< 新增字段
+            int(self._cur_episode),  # episode
+            int(t),                  # timestep
+            float(self.lambda_t),    # 动态惩罚强度
+            float(avg_cts),          # 平均 CTS（被选中）
+            float(min_cts),          # 全网最小 CTS（保留参考）
+            float(max_cts),          # 全网最大 CTS（保留参考）
+            float(avg_rep),          # 平均信誉
+            policy
         ))
 
     def change_network(self):
@@ -509,11 +521,11 @@ class dynetworkEnv(gym.Env):
                 self._beta_update(next_step, success=0)
                 return reward, self.curr_queue
 
-        # 多维安全惩罚：λ_t * (1 - CTS(next_step))
+        # 多维安全惩罚：λ_t * (1 - CTS(next_step))^alpha
         pow_term = max(0.0, 1.0 - self._node_cts(next_step))
         sec_penalty_val = self.lambda_t * (pow_term ** self.penalty_alpha)
 
-        # 拥塞/重传（失败）
+        # 拥塞/重传（失败）—— 修正检查对象为“下一跳”接收队列
         receiving_capacity = self.max_queue - self.max_transmit
         if len(self.dynetwork._network.nodes[next_step]['receiving_queue']) >= receiving_capacity:
             self.dynetwork._packets.packetList[self.packet]._times += 1
@@ -735,17 +747,13 @@ class dynetworkEnv(gym.Env):
     def begin_episode(self, ep: int):
         """在每个 episode 开始前由外部调用：标记轮次，并按需重采'安全属性'与'恶意节点'。"""
         self._cur_episode = int(ep)
-        # 先按需重采“安全属性”
         if self.attr_rand_enable and self.attr_rand_resample_each_episode:
             self._randomize_node_attrs(initial=False)
-
-        # 再按需重采“恶意节点”；若恶意集合不重采但属性变了，需重新覆盖
         if self.mal_resample_each_episode:
             self._assign_malicious_nodes(initial=False)
             print(f"[Episode {ep}] malicious nodes: {sorted(list(self._malicious_nodes))}")
         elif self.attr_rand_enable and self.attr_rand_resample_each_episode:
             self._apply_malicious_overlay()
-
 
     def _snapshot_cts(self):
         """采样当前全网 CTS 统计和平均信誉。"""
@@ -763,27 +771,21 @@ class dynetworkEnv(gym.Env):
         return hist
     
     def _randomize_node_attrs(self, initial=False):
-        """
-        按配置为“非固定节点”随机分配安全属性（不含 'Malicious'）。
-        结果写入 self._baseline_node_attr 与 self.node_attr。
-        """
         # 以 Setting.json 里的 node_attr 作为固定基线
         base = {str(k): v for k, v in self.node_attr.items()}
-        fixed_nodes = set(int(k) for k in base.keys()) | self.attr_rand_fixed_nodes
-        candidates = [i for i in range(self.nnodes) if i not in fixed_nodes]
+        fixed = set(int(k) for k in base.keys()) | self.attr_rand_fixed_nodes
+        candidates = [i for i in range(self.nnodes) if i not in fixed]
 
         if not candidates or not self.attr_rand_enable:
             self._baseline_node_attr = dict(base)
             self.node_attr = dict(self._baseline_node_attr)
             return
 
-        # 参与随机的类别（排除 Malicious）
         classes = [c for c in self.attr_rand_allow if c in self.attr_score and c != "Malicious"]
         if not classes:
             classes = [c for c in self.attr_score.keys() if c != "Malicious"]
 
         if self.attr_rand_mode == "count" and isinstance(self.attr_rand_counts, dict) and self.attr_rand_counts:
-            # 定额模式：构造“多重集”后无放回采样
             bag = []
             for c in classes:
                 bag += [c] * int(max(0, self.attr_rand_counts.get(c, 0)))
@@ -791,7 +793,6 @@ class dynetworkEnv(gym.Env):
                 bag += [classes[-1]] * (len(candidates) - len(bag))
             picks = self._attr_rng.choice(bag, size=len(candidates), replace=False).tolist()
         else:
-            # 概率模式（默认等概率）
             probs = [float(self.attr_rand_probs.get(c, 0.0)) if self.attr_rand_probs else (1.0/len(classes)) for c in classes]
             s = sum(probs)
             probs = [p/s for p in probs] if s > 0 else [1.0/len(classes)] * len(classes)
@@ -808,9 +809,6 @@ class dynetworkEnv(gym.Env):
             print("[MultiSecurity] randomized node_attr:", dict(cnt))
 
     def _apply_malicious_overlay(self):
-        """
-        在 baseline 上覆盖恶意节点为 'Malicious'（不改变恶意集合）。
-        """
         self.node_attr = dict(self._baseline_node_attr)
         for idx in self._malicious_nodes:
             self.node_attr[str(int(idx))] = "Malicious"
