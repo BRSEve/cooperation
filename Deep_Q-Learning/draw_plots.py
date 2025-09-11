@@ -292,3 +292,49 @@ def draw_time(avg_time_global_training, avg_time_local_training):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.savefig(results_dir + "training_time.png")
     plt.clf()
+
+def testing_plot_cts_series(dqn_series, sp_series):
+    """
+    dqn_series: (timesteps, avg_cts_list) for DQN
+    sp_series:  (timesteps, avg_cts_list) for SP
+    """
+    t1, y1 = dqn_series
+    t2, y2 = sp_series
+    print("CTS(DQN) len:", len(y1), "CTS(SP) len:", len(y2))
+    plt.clf()
+    plt.figure(figsize=(20, 10), dpi=100)
+    plt.title("Average CTS vs Time (DQN vs SP)", fontsize=20)
+    plt.plot(t1, y1, label='DQN - Avg CTS')
+    plt.plot(t2, y2, label='SP  - Avg CTS')
+    plt.xlabel('Timestep', fontsize=20)
+    plt.ylabel('Average CTS', fontsize=20)
+    plt.ylim(0, 1)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.legend(loc="lower right", prop={'size': 12})
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.savefig(results_dir + "cts_dqn_vs_sp.png")
+    plt.clf()
+
+def testing_plot_cts_vs_load(all_dqn_avg_cts, all_sp_avg_cts):
+    """
+    画 DQN 与 SP 在不同网络负载（Number of packets）下的平均 CTS（0~1）。
+    """
+    print("Average CTS vs Network Load")
+    print("DQN:", np.around(np.array(all_dqn_avg_cts), 3))
+    print("SP :", np.around(np.array(all_sp_avg_cts), 3))
+    plt.clf()
+    plt.figure(figsize=(20, 10), dpi=100)
+    plt.title("Average CTS vs Number of Packets", fontsize=20)
+    plt.plot(network_load, all_dqn_avg_cts, label='DQN', c='red')
+    plt.plot(network_load, all_sp_avg_cts,  label='SP',  c='blue')
+    plt.xlabel('Number of packets', fontsize=20)   # <<< 横轴就是负载
+    plt.ylabel('Average CTS', fontsize=20)
+    plt.ylim(0, 1)
+    plt.xlim(0, 1750)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.legend(loc="lower right", prop={'size':12})
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.savefig(results_dir + "cts_vs_load.png")
+    plt.clf()

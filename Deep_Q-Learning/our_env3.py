@@ -119,6 +119,8 @@ class dynetworkEnv(gym.Env):
         self.lambda_t   = float(ms.get("lambda0", 0.2))
         self.risk_beta  = float(ms.get("risk_beta", 2.0))
         self.risk_delta = float(ms.get("risk_delta", 0.05))
+        self.penalty_alpha = float(ms.get("penalty_alpha", 2.0))
+
 
         # ======== 随机恶意节点（新增）========
         mal_cfg = ms.get("malicious", {})
@@ -259,7 +261,8 @@ class dynetworkEnv(gym.Env):
     def _neighbor_penalties(self, neighbors):
         if not neighbors:
             return []
-        return [self.lambda_t * (1.0 - self._node_cts(j)) for j in neighbors]
+        return [self.lambda_t * ((1.0 - self._node_cts(j)) ** self.penalty_alpha) for j in neighbors]
+
 
     def _update_lambda(self):
         if self.nnodes <= 0:
@@ -394,14 +397,16 @@ class dynetworkEnv(gym.Env):
         self._update_lambda()
         # —— 记录本时间步的 CTS 快照到缓存 —— 
         avg_cts, min_cts, max_cts, avg_rep = self._snapshot_cts()
+        policy = "SP" if SP else "DQN"           # <<< 新增：策略标签
         self._cts_history.append((
-            int(self._cur_episode),     # episode
-            int(t),                     # timestep
-            float(self.lambda_t),       # 动态惩罚强度
-            float(avg_cts),             # 平均 CTS
-            float(min_cts),             # 最小 CTS
-            float(max_cts),             # 最大 CTS
-            float(avg_rep)              # 平均信誉
+            int(self._cur_episode),              # episode
+            int(t),                              # timestep
+            float(self.lambda_t),                # 动态惩罚强度
+            float(avg_cts),                      # 平均 CTS
+            float(min_cts),                      # 最小 CTS
+            float(max_cts),                      # 最大 CTS
+            float(avg_rep),                      # 平均信誉
+            policy                               # <<< 新增字段
         ))
 
     def change_network(self):
@@ -503,7 +508,8 @@ class dynetworkEnv(gym.Env):
                 return reward, self.curr_queue
 
         # 多维安全惩罚：λ_t * (1 - CTS(next_step))
-        sec_penalty_val = self.lambda_t * (1.0 - self._node_cts(next_step))
+        pow_term = max(0.0, 1.0 - self._node_cts(next_step))
+        sec_penalty_val = self.lambda_t * (pow_term ** self.penalty_alpha)
 
         # 拥塞/重传（失败）
         receiving_capacity = self.max_queue - self.max_transmit

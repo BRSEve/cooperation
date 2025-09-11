@@ -35,7 +35,7 @@
     "use_priority_memory": 0
   },
   "Simulation": {
-    "training_episodes": 15,
+    "training_episodes": 3,
     "max_allowed_time_step_per_episode": 200,
     "num_time_step_to_update_target_network": 10,
     "test_network_load_min": 250,
@@ -43,13 +43,13 @@
     "test_network_load_step_size": 250,
     "test_trials_per_load": 1,
     "test_trials_per_load_SP": 1,
-    "learning_plot": 0,
+    "learning_plot": 1,
     "test_diff_network_load_plot": 1,
     "plot_routing_network": 1,
     "testing_episodes": 6,
     "testing_episodes_local_training": 6,
     "whether_save": 1,
-    "whether_test": 0,
+    "whether_test": 1,
     "whether_retrain": 1,
     "SP_test_opt": 1,
     "DQN_test_opt": 1,
@@ -59,7 +59,10 @@
   },
 "MultiSecurity": {
   "attr_score": { "Core": 1.0, "Border": 0.7, "Unknown": 0.5, "Malicious": 0.1 },
-  "node_attr": { "0": "Core", "1": "Border", "2": "Core" },
+  "node_attr": {
+    "1": "Unknown", "3": "Unknown", "5": "Unknown", "7": "Unknown", "9": "Unknown",
+    "11": "Unknown", "13": "Unknown", "15": "Unknown", "17": "Unknown", "19": "Unknown"
+  },
 
   "beta_a0": 1.0,
   "beta_b0": 1.0,
@@ -70,9 +73,10 @@
   "omega_net": 0.30,
   "omega_rep": 0.20,
 
-  "lambda0": 0.2,
-  "risk_beta": 2.0,
-  "risk_delta": 0.05,
+  "lambda0": 0.6,
+  "risk_beta": 1.0,
+  "risk_delta": 0.20,
+  "penalty_alpha": 2.0,
 
   "malicious": {
     "mode": "ratio",

@@ -76,9 +76,13 @@ if train_times != 0:
 CTS_LOG_PATH = "./logs/cts_log.csv"
 os.makedirs(os.path.dirname(CTS_LOG_PATH), exist_ok=True)
 
+# === CTS 日志文件设置 ===
+CTS_LOG_PATH = "./logs/cts_log.csv"
+os.makedirs(os.path.dirname(CTS_LOG_PATH), exist_ok=True)
+
 def append_cts_rows(rows, csv_path=CTS_LOG_PATH):
-    """rows: [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep), ...]"""
-    header = ["episode", "timestep", "lambda_t", "avg_cts", "min_cts", "max_cts", "avg_rep"]
+    """rows: [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep, policy), ...]"""
+    header = ["episode", "timestep", "lambda_t", "avg_cts", "min_cts", "max_cts", "avg_rep", "policy"]
     file_exists = os.path.isfile(csv_path) and os.path.getsize(csv_path) > 0
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
@@ -158,6 +162,39 @@ env.save(setting["Simulation"]["whether_save"], model_path)
 
 test_opt = setting["Simulation"]["whether_test"]
 network_opt = setting["Simulation"]["network_opt_test"]
+
+def _rows_to_series(rows, expect_policy):
+    """
+    rows 既兼容8列(含policy)也兼容7列(不含policy):
+    [episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep, policy?]
+    """
+    filtered = []
+    for r in rows:
+        if len(r) >= 8:
+            if r[-1] == expect_policy:
+                filtered.append(r)
+        elif len(r) == 7:
+            filtered.append(r)  # 老格式：当作匹配
+    filtered.sort(key=lambda x: x[1])  # 按 timestep 升序
+    ts = [r[1] for r in filtered]
+    ys = [r[3] for r in filtered]      # avg_cts
+    return (ts, ys)
+
+def _mean_cts(rows, expect_policy):
+    # 兼容7列(无policy)与8列(有policy)的行格式
+    vals = []
+    for r in rows:
+        if len(r) >= 8:
+            if r[-1] == expect_policy:
+                vals.append(r[3])  # r[3] == avg_cts
+        elif len(r) >= 4:
+            vals.append(r[3])
+    return float(np.mean(vals)) if vals else 0.0
+
+last_dqn_cts_series = None
+last_sp_cts_series = None
+ep_counter_for_test = numEpisode  # 测试从训练轮次之后继续编号
+
 if test_opt == 1:
     print("进入测试部分")
     script_dir = os.path.dirname(__file__)
@@ -225,6 +262,9 @@ if test_opt == 1:
     dqn_retransmission_ratios, sp_retransmission_ratios = [], []
     all_dqn_congestions_numbers, all_sp_congestions_numbers = [], []
     dqn_congestions_numbers, sp_congestions_numbers = [], []
+    # --- 新增：按网络负载聚合的平均 CTS ---
+    all_dqn_avg_cts, all_sp_avg_cts = [], []
+    dqn_avg_cts, sp_avg_cts = [], []
 
     for i in range(len(network_load)):
         curLoad = network_load[i]
@@ -236,6 +276,8 @@ if test_opt == 1:
         all_dqn_retransmission_ratios.append([]); all_sp_retransmission_ratios.append([])
         dqn_congestions_numbers.append([]); sp_congestions_numbers.append([])
         all_dqn_congestions_numbers.append([]); all_sp_congestions_numbers.append([])
+        dqn_avg_cts.append([]); sp_avg_cts.append([])
+        all_dqn_avg_cts.append([]); all_sp_avg_cts.append([])
         print("---------- Testing:", curLoad, " ----------")
         for currTrial in range(trials):
             print("-----currTrial:", currTrial + 1, "-----")
@@ -244,7 +286,19 @@ if test_opt == 1:
                 env.reset(curLoad, False, False)
                 env.load(model_path)
                 print("测试节点不变的dqn的结果")
+
+                ep_counter_for_test += 1
+                env.begin_episode(ep_counter_for_test)   # 让本次测试的 CTS 带上唯一 episode
+
                 dqn_avg_deliv, dqn_avg_deliv_ratio, dqn_congestions_number, dqn_retransmission_ratio = Test(currTrial, curLoad, SP=False)
+
+                # --- 在 Test(...) 之后立刻 ---
+                rows = env.pop_cts_history()
+                if rows:
+                    append_cts_rows(rows)
+                    last_dqn_cts_series = _rows_to_series(rows, "DQN")
+                    dqn_avg_cts[i].append(_mean_cts(rows, "DQN"))   # <<< 新增
+
                 dqn_avg_delivs[i].append(dqn_avg_deliv)
                 dqn_avg_deliv_ratios[i].append(dqn_avg_deliv_ratio)
                 dqn_retransmission_ratios[i].append(dqn_retransmission_ratio)
@@ -252,7 +306,19 @@ if test_opt == 1:
             if SP_test_opt == 1:
                 env.reset(curLoad, False, False)
                 print("测试节点不变的sp的结果")
+
+                ep_counter_for_test += 1
+                env.begin_episode(ep_counter_for_test)   # 让本次测试的 CTS 带上唯一 episode
+
                 sp_avg_deliv, sp_avg_deliv_ratio, sp_congestions_number, sp_retransmission_ratio = Test(currTrial, curLoad, SP=True)
+
+                # --- 在 Test(...) 之后立刻 ---
+                rows = env.pop_cts_history()
+                if rows:
+                    append_cts_rows(rows)
+                    last_dqn_cts_series = _rows_to_series(rows, "DQN")
+                    dqn_avg_cts[i].append(_mean_cts(rows, "DQN"))   # <<< 新增
+
                 sp_avg_delivs[i].append(sp_avg_deliv)
                 sp_avg_deliv_ratios[i].append(sp_avg_deliv_ratio)
                 sp_retransmission_ratios[i].append(sp_retransmission_ratio)
@@ -276,10 +342,27 @@ if test_opt == 1:
         all_dqn_congestions_numbers[i].append(dqn_congest_number)
         all_sp_congestions_numbers[i].append(sp_congest_number)
 
+        dqn_avg_cts_val = sum(dqn_avg_cts[i]) / len(dqn_avg_cts[i]) if dqn_avg_cts[i] else 0.0
+        sp_avg_cts_val  = sum(sp_avg_cts[i])  / len(sp_avg_cts[i])  if sp_avg_cts[i]  else 0.0
+
+        all_dqn_avg_cts[i].append(dqn_avg_cts_val)
+        all_sp_avg_cts[i].append(sp_avg_cts_val)  
+
     draw_plots.draw_testing(all_dqn_avg_delivs, all_sp_avg_delivs,
                             all_dqn_avg_deliv_ratios, all_sp_avg_deliv_ratios,
                             all_dqn_retransmission_ratios, all_sp_retransmission_ratios,
                             all_dqn_congestions_numbers, all_sp_congestions_numbers)
+    # === 新增：按负载的 CTS 折线图（横轴为 Number of packets）===
+    draw_plots.testing_plot_cts_vs_load(all_dqn_avg_cts, all_sp_avg_cts)
+
+    # === 在测试总结图之后，补画 DQN vs SP 的 CTS 折线图 ===
+    if (last_dqn_cts_series is not None and last_sp_cts_series is not None and
+        len(last_dqn_cts_series[0]) > 0 and len(last_sp_cts_series[0]) > 0):
+        draw_plots.testing_plot_cts_series(last_dqn_cts_series, last_sp_cts_series)
+    else:
+        print("[WARN] 没拿到完整的 CTS 时间序列，跳过 CTS 折线图绘制；"
+              "请确认 our_env3.updateWhole 已将 policy 写入 CTS 日志，且测试阶段确实运行了 DQN 与 SP。")
+
 
 print("start Time =", start_time)
 now = datetime.now()
