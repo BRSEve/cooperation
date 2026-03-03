@@ -356,6 +356,7 @@ if test_opt == 1:
                             all_dqn_avg_deliv_ratios, all_sp_avg_deliv_ratios,
                             all_dqn_retransmission_ratios, all_sp_retransmission_ratios,
                             all_dqn_congestions_numbers, all_sp_congestions_numbers)
+    
     # === 新增：按负载的 CTS 折线图（横轴为 Number of packets）===
     draw_plots.testing_plot_cts_vs_load(all_dqn_avg_cts, all_sp_avg_cts)
 
