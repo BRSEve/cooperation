@@ -19,6 +19,7 @@ from neural_network import NeuralNetwork
 import matplotlib
 import get_graph
 import pickle
+from maritime_physics import MaritimeChannelModel
 
 # 读取配置
 main_dir = os.path.dirname(os.path.realpath(__file__))
@@ -69,6 +70,8 @@ class dynetworkEnv(gym.Env):
         self.batch_size = setting['DQN']['memory_batch_size']
         self.gamma = setting['AGENT']['gamma_for_next_q_val']
         self.network_use = setting['NETWORK']['use_which_network']
+        self.maritime_phy = MaritimeChannelModel(setting.get("MaritimePHY", {}))
+        self.max_edge_weight = max(self.max_edge_weight, self.maritime_phy.max_edge_delay_steps)
 
         # ========= 多维度安全（CTS）=========
         ms = setting.get("MultiSecurity", {})
@@ -129,6 +132,11 @@ class dynetworkEnv(gym.Env):
         self._mal_rng = np.random.default_rng(self.mal_seed)
         self._malicious_nodes = set()
         self._baseline_node_attr = dict(self.node_attr)
+        service_cfg = setting.get("ServicePriority", {})
+        self.service_priority_cfg = service_cfg
+        self.priority_aging_factor = float(service_cfg.get("aging_factor", 0.02))
+        self.priority_error_levels = set(service_cfg.get("priority_error_levels", ["critical", "important"]))
+        self.priority_failure_penalty = float(service_cfg.get("failure_penalty", 200.0))
 
         # ---- 地图初始化 ----
         script_dir = os.path.dirname(__file__)
@@ -185,8 +193,11 @@ class dynetworkEnv(gym.Env):
             self.dynetwork = copy.deepcopy(self.initial_dynetwork)
             positions = {nodeIdx: self.initial_dynetwork._network.nodes[nodeIdx]['position'] for nodeIdx in network.nodes}
 
+        self._apply_maritime_physics(self.initial_dynetwork._network)
+        self._apply_maritime_physics(self.dynetwork._network)
         self.dynetwork.randomGeneratePackets(copy.deepcopy(self.npackets), False)
         self._positions = positions
+        self._sync_service_priority_profile()
 
         # === CTS 日志缓存 ===
         self._cts_history = []     # [(episode, t, lambda_t, avg_cts, min_cts, max_cts, avg_rep, policy), ...]
@@ -298,6 +309,125 @@ class dynetworkEnv(gym.Env):
     def _is_malicious(self, node: int) -> bool:
         return int(node) in self._malicious_nodes
 
+    def _apply_maritime_physics(self, graph):
+        self.maritime_phy.apply_to_graph(graph)
+
+    def _refresh_maritime_physics(self):
+        self._apply_maritime_physics(self.dynetwork._network)
+
+    def _sync_service_priority_profile(self):
+        service_cfg = getattr(self.dynetwork, "_service_cfg", {})
+        self.service_enable = bool(service_cfg.get("enable", False))
+        self.service_levels = service_cfg.get("levels", {})
+        self.service_order = service_cfg.get("ordered_levels", [])
+        self.default_service_level = service_cfg.get("default_level", "normal")
+
+    def _get_packet_obj(self, packet_id, SP=False):
+        packets = self.dynetwork.sp_packets if SP else self.dynetwork._packets
+        return packets.packetList[packet_id]
+
+    def _get_service_profile(self, packet):
+        level = packet.get_service_level()
+        if level not in self.service_levels:
+            level = self.default_service_level
+        profile = self.service_levels.get(level, {"priority": 1, "resource_share": 1.0, "retry_limit": 10, "reward_bonus": 0.0, "error_queue_front": False})
+        return level, profile
+
+    def _packet_rank_score(self, packet):
+        level, profile = self._get_service_profile(packet)
+        age_bonus = self.priority_aging_factor * float(packet.get_time())
+        retry_bonus = 0.5 * float(packet.get_congestion_times())
+        return float(profile["priority"]) + age_bonus + retry_bonus
+
+    def _sort_queue_by_priority(self, queue_ids, SP=False):
+        def sort_key(packet_id):
+            packet = self._get_packet_obj(packet_id, SP=SP)
+            return (-self._packet_rank_score(packet), packet.get_index())
+        return sorted(list(queue_ids), key=sort_key)
+
+    def _calc_resource_quotas(self, sending_capacity):
+        if not self.service_enable or sending_capacity <= 0 or not self.service_order:
+            return {}
+        quotas = {}
+        used = 0
+        for level in self.service_order:
+            share = max(0.0, float(self.service_levels[level].get("resource_share", 0.0)))
+            quota = int(math.floor(sending_capacity * share))
+            quotas[level] = quota
+            used += quota
+        remaining = max(0, sending_capacity - used)
+        for level in self.service_order:
+            if remaining <= 0:
+                break
+            quotas[level] = quotas.get(level, 0) + 1
+            remaining -= 1
+        return quotas
+
+    def _build_dispatch_plan(self, queue_ids, sending_capacity, SP=False):
+        ordered_queue = self._sort_queue_by_priority(queue_ids, SP=SP)
+        if not self.service_enable:
+            return ordered_queue
+        quotas = self._calc_resource_quotas(sending_capacity)
+        grouped = {level: [] for level in self.service_order}
+        fallback = []
+        for packet_id in ordered_queue:
+            packet = self._get_packet_obj(packet_id, SP=SP)
+            level, _ = self._get_service_profile(packet)
+            if level in grouped:
+                grouped[level].append(packet_id)
+            else:
+                fallback.append(packet_id)
+
+        plan = []
+        leftovers = []
+        for level in self.service_order:
+            packet_ids = grouped.get(level, [])
+            quota = quotas.get(level, 0)
+            plan.extend(packet_ids[:quota])
+            leftovers.extend(packet_ids[quota:])
+        leftovers.extend(fallback)
+        plan.extend(self._sort_queue_by_priority(leftovers, SP=SP))
+        return plan
+
+    def _frontload_retry(self, packet):
+        level, profile = self._get_service_profile(packet)
+        return bool(profile.get("error_queue_front", False) or level in self.priority_error_levels)
+
+    def _preserve_packet_meta(self, packet):
+        return {"service_level": packet.get_service_level()}
+
+    def _failure_penalty(self, packet):
+        _, profile = self._get_service_profile(packet)
+        return float(self.priority_failure_penalty + profile.get("reward_bonus", 0.0))
+
+    def _handle_priority_failure(self, pkt, next_step, reason):
+        pkt._times += 1
+        self.dynetwork._record_service_event(pkt, "failures")
+        self.curr_queue.remove(self.packet)
+        retry_limit = max(1, int(pkt.get_max_retries()))
+        if pkt.get_congestion_times() < retry_limit:
+            if self._frontload_retry(pkt):
+                self.remaining.insert(0, self.packet)
+                self.dynetwork._priority_retransmission += 1
+            else:
+                self.remaining.append(self.packet)
+            self.dynetwork._num_retransmission += 1
+            self.dynetwork._record_service_event(pkt, "retransmissions")
+        else:
+            self.dynetwork._num_congestions += 1
+            self.dynetwork._packets.packetList[self.packet]._flag = -1
+            if self._frontload_retry(pkt):
+                self.dynetwork._priority_drop += 1
+            self.dynetwork._record_service_event(pkt, "dropped")
+            if self.dynetwork._initializations < self.dynetwork._max_initializations:
+                packet_meta = self._preserve_packet_meta(pkt) if self._frontload_retry(pkt) else None
+                self.dynetwork.GeneratePacket(self.packet, False, 0, True, packet_meta=packet_meta)
+        self._beta_update(next_step, success=0)
+        return -self._failure_penalty(pkt), self.curr_queue
+
+    def get_service_stats(self):
+        return self.dynetwork.get_service_snapshot()
+
     # ---------- 主流程 ----------
     def router(self, agent, t, will_learn=True, SP=False):
         # 收集“本时间步被选中下一跳”的 CTS，用于增强区分度
@@ -313,6 +443,7 @@ class dynetworkEnv(gym.Env):
                 self.nodes_traversed = 0
 
             node = self.dynetwork._network.nodes[nodeIdx]
+            node['sending_queue'] = self._sort_queue_by_priority(node['sending_queue'], SP=SP)
             self.curr_queue = node['sending_queue']
             sending_capacity = node['max_send_capacity']
             holding_capacity = node['max_receive_capacity']
@@ -329,11 +460,14 @@ class dynetworkEnv(gym.Env):
 
             self.remaining = []
             sendctr = 0
-            for _ in range(queue_size):
+            dispatch_plan = self._build_dispatch_plan(self.curr_queue, sending_capacity, SP=SP)
+            for packet_id in dispatch_plan:
                 if sendctr == sending_capacity:
                     self.dynetwork._rejections += (1 * (len(node['sending_queue'])))
                     break
-                self.packet = self.curr_queue[0]
+                if packet_id not in self.curr_queue:
+                    continue
+                self.packet = packet_id
                 pkt_state = self.get_state(self.packet)
 
                 cur_state = F.one_hot(torch.tensor([pkt_state[1]]), self.nnodes)
@@ -371,7 +505,7 @@ class dynetworkEnv(gym.Env):
                     self._chosen_cts.append(self._node_cts(action))
 
                 if reward is not None:
-                    sendctr += 1
+                    sendctr += max(1, self.dynetwork._packets.packetList[self.packet].get_resource_demand())
 
                 if will_learn and action is not None:
                     next_state = F.one_hot(torch.tensor([pkt_state[1]]), self.nnodes)
@@ -399,6 +533,8 @@ class dynetworkEnv(gym.Env):
         self._last_step_chosen_cts = float(np.mean(self._chosen_cts)) if self._chosen_cts else 0.0
 
     def updateWhole(self, agent, t, learn=True,  SP=False, savesteps=False):
+        self.maritime_phy.advance(self.edge_change_type)
+        self._refresh_maritime_physics()
         self.purgatory(False)
         self.update_queues(False)
         self.update_time(False)
@@ -425,19 +561,17 @@ class dynetworkEnv(gym.Env):
 
     def change_network(self):
         self.dynetwork = copy.deepcopy(self.initial_dynetwork)
+        self._sync_service_priority_profile()
         renew_nodes = UE.Add1(self.dynetwork, self.move_number)
-        if self.edge_change_type == 'sinusoidal':
-            UE.Sinusoidal(self.dynetwork)
-        elif self.edge_change_type == 'none':
-            pass
-        else:
-            UE.Random_Walk(self.dynetwork)
+        self._apply_maritime_physics(self.dynetwork._network)
         self.changed_dynetwork = dynetwork.DynamicNetwork(copy.deepcopy(self.dynetwork._network), self.max_initializations)
         self.renew_nodes = renew_nodes
         print("renew_nodes:", self.renew_nodes)
 
     def reset(self, curLoad=None, Change=False, SP=False):
         self.dynetwork = copy.deepcopy(self.changed_dynetwork) if Change else copy.deepcopy(self.initial_dynetwork)
+        self._sync_service_priority_profile()
+        self._apply_maritime_physics(self.dynetwork._network)
         if curLoad is not None:
             self.npackets = curLoad
         self.dynetwork.randomGeneratePackets(self.npackets, SP)
@@ -504,22 +638,23 @@ class dynetworkEnv(gym.Env):
         pkt = self.dynetwork._packets.packetList[self.packet]
         curr_node = pkt.get_curPos()
         dest_node = pkt.get_endPos()
-        weight = self.dynetwork._network[curr_node][next_step]['edge_delay']
+        link = self.dynetwork._network[curr_node][next_step]
+        weight = link['edge_delay']
+        _, service_profile = self._get_service_profile(pkt)
+        reward_bonus = float(service_profile.get("reward_bonus", 0.0))
+        physical_drop_prob = float(link.get('per', 0.0))
+
+        if not bool(link.get('link_available', 1)):
+            return self._handle_priority_failure(pkt, next_step, reason="physical_outage")
+        if (physical_drop_prob > 0.0) and (self._mal_rng.random() < physical_drop_prob):
+            return self._handle_priority_failure(pkt, next_step, reason="physical_error")
 
         # —— 恶意节点附加行为（延迟放大/黑洞丢包）——
         if self._is_malicious(next_step):
             if self.mal_delay_factor != 1.0:
-                weight = float(weight) * self.mal_delay_factor
+                weight = int(math.ceil(float(weight) * self.mal_delay_factor))
             if (self.mal_drop_prob > 0.0) and (self._mal_rng.random() < self.mal_drop_prob):
-                # 按“拥塞丢弃”的逻辑处理计数与再生成，便于沿用你的统计口径
-                self.dynetwork._num_congestions += 1
-                self.dynetwork._packets.packetList[self.packet]._flag = -1
-                if self.dynetwork._initializations < self.dynetwork._max_initializations:
-                    self.dynetwork.GeneratePacket(self.packet, False, 0, True)
-                self.curr_queue.remove(self.packet)
-                reward = -200
-                self._beta_update(next_step, success=0)
-                return reward, self.curr_queue
+                return self._handle_priority_failure(pkt, next_step, reason="malicious_drop")
 
         # 多维安全惩罚：λ_t * (1 - CTS(next_step))^alpha
         pow_term = max(0.0, 1.0 - self._node_cts(next_step))
@@ -528,20 +663,7 @@ class dynetworkEnv(gym.Env):
         # 拥塞/重传（失败）—— 修正检查对象为“下一跳”接收队列
         receiving_capacity = self.max_queue - self.max_transmit
         if len(self.dynetwork._network.nodes[next_step]['receiving_queue']) >= receiving_capacity:
-            self.dynetwork._packets.packetList[self.packet]._times += 1
-            if self.dynetwork._packets.packetList[self.packet]._times < 10:
-                self.curr_queue.remove(self.packet)
-                self.remaining.append(self.packet)
-                self.dynetwork._num_retransmission += 1
-            else:
-                self.dynetwork._num_congestions += 1
-                self.dynetwork._packets.packetList[self.packet]._flag = -1
-                if self.dynetwork._initializations < self.dynetwork._max_initializations:
-                    self.dynetwork.GeneratePacket(self.packet, False, 0, True)
-                self.curr_queue.remove(self.packet)
-            reward = -200
-            self._beta_update(next_step, success=0)
-            return reward, self.curr_queue
+            return self._handle_priority_failure(pkt, next_step, reason="queue_congestion")
 
         # 正常转发
         self.dynetwork._packets.packetList[self.packet].set_time(pkt.get_time() + weight)
@@ -551,10 +673,11 @@ class dynetworkEnv(gym.Env):
             self.dynetwork._delivery_times.append(self.dynetwork._packets.packetList[self.packet].get_time())
             self.dynetwork._deliveries += 1
             self.dynetwork._packets.packetList[self.packet]._flag = 1
+            self.dynetwork._record_service_event(pkt, "delivered")
             if self.dynetwork._initializations < self.dynetwork._max_initializations:
                 self.dynetwork.GeneratePacket(self.packet, False, 0, True)
             self.curr_queue.remove(self.packet)
-            reward = 1000
+            reward = 1000 + reward_bonus
             reward -= sec_penalty_val
             self._beta_update(next_step, success=1)
         else:
@@ -570,6 +693,7 @@ class dynetworkEnv(gym.Env):
             except nx.NetworkXNoPath:
                 reward = -1000
             self.dynetwork._network.nodes[next_step]['receiving_queue'].append((self.packet, weight))
+            reward += 0.1 * reward_bonus
             reward -= sec_penalty_val
             self._beta_update(next_step, success=1)
 

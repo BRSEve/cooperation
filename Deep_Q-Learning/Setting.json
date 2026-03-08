@@ -35,7 +35,7 @@
     "use_priority_memory": 0
   },
   "Simulation": {
-    "training_episodes": 0,
+    "training_episodes": 3,
     "max_allowed_time_step_per_episode": 200,
     "num_time_step_to_update_target_network": 10,
     "test_network_load_min": 250,
@@ -98,6 +98,73 @@
       "seed": 123,
       "resample_each_episode": 0,
       "fixed_nodes": ["0","1","2"]
+    }
+  },
+  "MaritimePHY": {
+    "enable": 1,
+    "carrier_frequency_hz": 1800000000.0,
+    "bandwidth_hz": 5000000.0,
+    "tx_power_dbm": 43.0,
+    "tx_gain_dbi": 8.0,
+    "rx_gain_dbi": 8.0,
+    "rx_noise_figure_db": 6.0,
+    "system_loss_db": 2.0,
+    "receiver_sensitivity_dbm": -95.0,
+    "min_snr_db": 3.0,
+    "snr_gap_db": 3.0,
+    "packet_size_bits": 12000.0,
+    "slot_duration_s": 0.002,
+    "grid_unit_km": 8.0,
+    "max_edge_delay_steps": 100,
+    "tx_antenna_height_m": 25.0,
+    "rx_antenna_height_m": 25.0,
+    "sea_reflection_magnitude": 0.92,
+    "significant_wave_height_m": 1.5,
+    "atmospheric_loss_db_per_km": 0.01,
+    "rain_loss_db_per_km": 0.0,
+    "evaporation_duct_gain_db": 0.0,
+    "dynamics": {
+      "mode": "none",
+      "sin_amplitude_db": 1.5,
+      "sin_period_steps": 20,
+      "random_walk_sigma_db": 0.25,
+      "random_walk_clip_db": 3.0,
+      "seed": 2026
+    }
+  },
+  "ServicePriority": {
+    "enable": 1,
+    "seed": 2026,
+    "aging_factor": 0.03,
+    "failure_penalty": 220,
+    "priority_error_levels": ["critical", "important"],
+    "traffic_distribution": {
+      "critical": 0.2,
+      "important": 0.3,
+      "normal": 0.5
+    },
+    "levels": {
+      "critical": {
+        "priority": 3,
+        "resource_share": 0.5,
+        "retry_limit": 15,
+        "reward_bonus": 80,
+        "error_queue_front": 1
+      },
+      "important": {
+        "priority": 2,
+        "resource_share": 0.3,
+        "retry_limit": 10,
+        "reward_bonus": 40,
+        "error_queue_front": 1
+      },
+      "normal": {
+        "priority": 1,
+        "resource_share": 0.2,
+        "retry_limit": 6,
+        "reward_bonus": 0,
+        "error_queue_front": 0
+      }
     }
   }
 }

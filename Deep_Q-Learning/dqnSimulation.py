@@ -87,6 +87,15 @@ def append_cts_rows(rows, csv_path=CTS_LOG_PATH):
             writer.writerow(header)
         writer.writerows(rows)
 
+def summarize_service_stats(stats):
+    ordered = []
+    for level, metric in stats.items():
+        ordered.append(
+            f"{level}: gen={metric.get('generated', 0)}, del={metric.get('delivered', 0)}, "
+            f"drop={metric.get('dropped', 0)}, retry={metric.get('retransmissions', 0)}"
+        )
+    return " | ".join(ordered)
+
 # ===================== 训练 =====================
 for i_episode in range(numEpisode):
     env.begin_episode(i_episode + 1)   # 标记当前 episode（用于 CTS 日志）
@@ -126,8 +135,11 @@ for i_episode in range(numEpisode):
     print("congestion happened,the number of dropped packets is:", env.dynetwork._congestions[-1])
     print("the number of retransmission is", env.dynetwork._retransmission[-1])
     print("the ratio of retransmission is:", env.dynetwork._retransmission[-1]/(env.dynetwork._deliveries+ env.dynetwork._retransmission[-1]))
+    print("priority retransmission:", env.dynetwork._priority_retransmission)
+    print("priority drop:", env.dynetwork._priority_drop)
     print("初始化的packets：", env.npackets)
     print("total packets:", env.npackets + env.dynetwork._initializations)
+    print("service stats:", summarize_service_stats(env.get_service_stats()))
 
     delivery_ratio = env.dynetwork._deliveries / (env.dynetwork._deliveries + env.dynetwork._congestions[-1] if env.dynetwork._congestions[-1] > 0 else max(1, env.dynetwork._deliveries))
     print("delivery_ratio:", delivery_ratio)
@@ -241,9 +253,12 @@ if test_opt == 1:
         print("pkt not_deliveried:", not_deliveries_testing)
         print("congestion happened,the number of dropped packets is:", env.dynetwork._congestions[-1])
         print("the ratio of retransmission is:", env.dynetwork._retransmission[-1]/(env.dynetwork._deliveries + env.dynetwork._retransmission[-1]))
+        print("priority retransmission:", env.dynetwork._priority_retransmission)
+        print("priority drop:", env.dynetwork._priority_drop)
         print("total pkts:", curLoad + env.dynetwork._initializations)
         print("delivery ratio:",
               env.dynetwork._deliveries / (env.dynetwork._deliveries + env.dynetwork._congestions[-1]))
+        print("service stats:", summarize_service_stats(env.get_service_stats()))
         avg = env.calc_avg_delivery()
         print("avg_delivery_time:", avg)
         return (env.calc_avg_delivery(),
